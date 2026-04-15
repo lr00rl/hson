@@ -4,7 +4,7 @@ import System.Environment (getArgs)
 import Data.List (intercalate)
 import Data.Char (ord)
 import Numeric (showHex)
-import Hson.Parser (runParser, parseJson)
+import Hson.Parser (parse, parseJson, ParseError(..))
 import Hson.Types (JsonValue(..))
 
 -- | 美化打印 JSON（带缩进）
@@ -52,11 +52,11 @@ main = do
     (file:_) -> readFile file
     []       -> getContents
 
-  case runParser parseJson input of
-    Just (json, rest) -> do
+  case parse parseJson input of
+    Right (json, rest) -> do
       putStrLn (prettyPrint json)
       if all (`elem` " \t\n\r") rest
         then return ()
         else putStrLn $ "Warning: unparsed trailing input: " ++ take 50 rest
-    Nothing -> do
-      putStrLn "Error: Failed to parse JSON"
+    Left err -> do
+      putStrLn $ "Error at line " ++ show (peLine err) ++ ", column " ++ show (peCol err) ++ ": " ++ peMessage err

@@ -121,7 +121,7 @@ We prepared 6 progressive challenges in [`CHALLENGES.md`](./CHALLENGES.md), and 
 | 1 | **Escape sequences in strings** — `\"`, `\\`, `\n`, `\t` | ✅ Completed |
 | 2 | **Hand-written number parser** — integers, decimals, negatives, scientific notation | ✅ Completed |
 | 3 | **RFC 8259 full compliance** — `\b`, `\f`, `\r`, `\uXXXX`, surrogate pairs, reject bare control chars | ✅ Completed |
-| 4 | **Error reporting** — upgrade from `Maybe` to `Either ParseError` with line/column info | 🚧 Pending |
+| 4 | **Error reporting** — upgrade from `Maybe` to `Either ParseError` with line/column info | ✅ Completed |
 | 5 | **JSON Path queries** — implement `.data.users[0].name`-style lookups | 🚧 Pending |
 | 6 | **Generic deserialization** — write a `FromJson` type class | 🚧 Pending |
 | 7 | **Performance** — migrate from `String` to `Data.Text` | 🚧 Pending |

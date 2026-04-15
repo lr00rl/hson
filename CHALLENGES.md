@@ -110,39 +110,56 @@ parseInt = do
 
 ---
 
-## 挑战 3：从 Maybe 到 Either — 精确错误报告
+## ✅ 挑战 3：从 Maybe 到 Either — 精确错误报告（已完成）
 
 ### 现状
 解析失败时，我们只能得到冰冷的 `Nothing`，用户完全不知道哪里出错了。
 
 ### 目标
-把解析器核心类型从：
+把解析器核心类型从 `String -> Maybe (a, String)` 升级为携带行列号的状态传递：
 ```haskell
-Parser a = String -> Maybe (a, String)
-```
-升级为：
-```haskell
-data ParseError = ParseError
-  { peMessage :: String
-  , peInput   :: String
-  , peLine    :: Int
-  , peCol     :: Int
-  }
-
-type Parser a = String -> Either ParseError (a, String)
+data State = State { sInput :: String, sLine :: Int, sCol :: Int }
+data ParseError = ParseError { peMessage :: String, peLine :: Int, peCol :: Int, peInput :: String }
+newtype Parser a = Parser { runParser :: State -> Either ParseError (a, State) }
 ```
 
-然后修改所有类型类实例和解析器，使其在遇到失败时报告：
-- 错误信息（如 `"Expected ',' but found '}'"`）
-- 当前行号和列号
+然后修改所有类型类实例和解析器，使其在遇到失败时报告精确的行号、列号和错误描述。
 
-### 提示
-- 需要修改 `newtype Parser a = Parser { runParser :: String -> Either ParseError (a, String) }`
-- `satisfy`、`char`、`string` 等基础解析器是唯一真正消费输入的地方，错误报告主要在这里产生
-- `Alternative` 的 `<|>` 在这里要注意：如果左边失败了，要尝试右边，但**如果两边都失败**，你应该返回更“深入”的那个错误，而不是第一个或最后一个
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心改动：
+1. 新增 `State` 类型追踪行列号，`advanceState` 在消费 `\n` 时换行
+2. `satisfy` 和 `char` 在失败时构造 `ParseError` 并带上当前位置
+3. `Alternative` 的 `<|>` 使用 `farthestError` 选择"走得更远"的错误
+4. `sepBy` 被改造为"承诺解析"：如果 `p` 已经消费了输入再失败，**不会**回退为空列表
+
+### 关键代码
+```haskell
+farthestError :: ParseError -> ParseError -> ParseError
+farthestError e1 e2
+  | peLine e1 > peLine e2 = e1
+  | peLine e1 < peLine e2 = e2
+  | peCol e1 >= peCol e2  = e1
+  | otherwise             = e2
+
+sepBy :: Parser a -> Parser sep -> Parser [a]
+sepBy p sep = Parser $ \st -> case runParser p st of
+  Right (x, st1) -> ...
+  Left err ->
+    if peLine err == sLine st && peCol err == sCol st
+      then Right ([], st)   -- p 没吃输入，允许回退到空列表
+      else Left err          -- p 已经吃了输入，必须传播错误
+```
+
+### 验证示例
+| 非法输入 | 错误输出 |
+|----------|----------|
+| `{"a": 01}` | `Error at line 1, column 8: Leading zeros are not allowed...` |
+| `[1, 2, 3` | `Error at line 2, column 1: Expected ']' but reached end of input` |
 
 ### 学习目标
-- 理解 `Either` Monad
+- 理解 `Either` Monad 作为错误通道
 - 错误处理的设计权衡（错误恢复 vs 精确报告）
 - 这是工业级解析器（如 Megaparsec）的核心课题
 

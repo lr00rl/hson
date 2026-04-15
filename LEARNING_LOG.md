@@ -228,3 +228,108 @@ cabal run hson -- examples/rfc8259.json
 2. **Parser 组合的可组合性**：`parseInt`、`parseFrac`、`parseExp` 三个小组件独立编写、独立测试，最后用 `optional` 和 `<*>` 组合成完整的 `parseNumber`。
 3. **端到端的一致性**：解析和输出必须对称。如果只升级解析器而不升级 `prettyPrint`， round-trip（解析后再打印）就会破坏数据。
 4. **`read` 的安全使用**：虽然 `read` 本身比较"宽容"，但因为我们已经用 Parser 做了严格的语法验证，所以 `read numStr` 在这里是安全的。
+
+---
+
+## 2025-04-16 | 挑战 4：精确错误报告 — 从 Maybe 到 Either ParseError
+
+### 目标
+把解析器的核心类型从 `Maybe` 升级为 `Either ParseError`，并追踪行号和列号，让错误信息像真正的编译器一样精确。
+
+### 核心设计
+
+#### 1. 引入状态类型 `State`
+```haskell
+data State = State
+  { sInput :: String  -- 剩余输入
+  , sLine  :: Int     -- 当前行号
+  , sCol   :: Int     -- 当前列号
+  }
+```
+
+#### 2. 新的 Parser 类型
+```haskell
+newtype Parser a = Parser { runParser :: State -> Either ParseError (a, State) }
+```
+
+以及便捷的入口函数：
+```haskell
+parse :: Parser a -> String -> Either ParseError (a, String)
+parse p input = runParser p (State input 1 1)
+```
+
+#### 3. 行列号更新逻辑 `advanceState`
+```haskell
+advanceState :: State -> Char -> State
+advanceState st c
+  | c == '\n' = State (tailInput) (sLine st + 1) 1
+  | otherwise = State (tailInput) (sLine st) (sCol st + 1)
+```
+
+### 类型类实例重写
+
+**Functor / Applicative / Monad**：
+结构和原来几乎一样，只是把 `Just`/`Nothing` 换成 `Right`/`Left`。
+
+**Alternative 的 `<|>`**：
+这是最有意思的部分。关键决策：
+- 如果 `p` 成功，直接返回 `p` 的结果
+- 如果 `p` 失败，尝试 `q`
+- 如果两边都失败，返回"走得更远"的那个错误
+
+```haskell
+p <|> q = Parser $ \st -> case runParser p st of
+  Right ok    -> Right ok
+  Left err1   -> case runParser q st of
+    Right ok    -> Right ok
+    Left err2   -> Left (farthestError err1 err2)
+```
+
+`farthestError` 比较行号和列号，优先保留位置更靠后的错误。这符合人类直觉：如果 `parseNull` 已经解析了 `n` 然后失败，它比什么都没匹配的 `parseBool` 更"接近"用户的意图。
+
+### 踩坑
+
+#### 坑 1：`sepBy` 的过度回退
+原来的 `sepBy` 实现是：
+```haskell
+sepBy p sep = (:) <$> p <*> many (sep *> p) <|> pure []
+```
+
+这会导致一个严重问题：如果 `p` 已经消费了输入然后失败（比如对象里的 `"a": 01`），`<|> pure []` 会回退到 `p` 开始前的状态，并返回空列表。这会让对象解析器忽略已经解析的内容，直接期望 `}`，最终报出一个莫名其妙的位置错误。
+
+**修复**：让 `sepBy` 只在 `p` **完全没有消费输入**的情况下才回退到空列表。
+
+```haskell
+sepBy p sep = Parser $ \st -> case runParser p st of
+  Right (x, st1) -> case runParser (many (sep *> p)) st1 of
+    Right (xs, st2) -> Right (x:xs, st2)
+    Left err        -> Left err
+  Left err ->
+    if peLine err == sLine st && peCol err == sCol st
+      then Right ([], st)
+      else Left err
+```
+
+这是" committed parsing "（承诺解析）的一个简化版教学实现。它保证了：如果解析器已经开始吃了输入，就必须负责到底。
+
+#### 坑 2：`optional` 与错误信息的丢失
+在 `parseNumber` 中，`optional parseFrac` 如果 `parseFrac` 已经消费了 `.` 然后失败，`optional` 会回退状态并返回 `Nothing`。这导致 `1.` 的错误不会直接来自 `parseFrac`，而是来自外层的对象解析器（"Expected '}' but found '.'"）。
+
+**思考**：要完全修复这个问题需要引入 `try` 语义（Megaparsec 的做法）或更复杂的错误类型（trivial vs fancy errors）。对于当前的教学项目，我们认为"位置正确"比"信息绝对精准"更有价值。用户的输入确实在 `1.` 处出错了，虽然报错信息不是最内层的，但位置足够指引修复方向。
+
+### 验证结果
+
+| 非法输入 | 错误输出 |
+|----------|----------|
+| `{"a": 01}` | `Error at line 1, column 8: Leading zeros are not allowed in JSON numbers` |
+| `[1, 2, 3` | `Error at line 2, column 1: Expected ']' but reached end of input` |
+| `{"a": "hello\nworld"}` | `Error at line 1, column 13: Expected '"' but found '\n'` |
+
+全部精准定位 ✅
+
+### 学习收获
+
+1. **Either 作为错误通道**：`Either ParseError (a, State)` 让解析器从"黑盒失败"变成了"白盒诊断"。
+2. **位置的精确性比信息的完美性更重要**：用户首先关心"哪里错了"，其次才是"为什么错"。
+3. **组合子的语义设计**：`sepBy` 和 `<|>` 的"是否回退"直接影响错误报告的质量。这是工业级解析器（Parsec / Megaparsec）的核心课题。
+4. **ABNF 到代码的映射依然成立**：即使加入了错误和状态追踪，Parser Combinator 的高阶组合模式依然优雅。
