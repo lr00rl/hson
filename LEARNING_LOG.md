@@ -584,3 +584,113 @@ time cabal run hson -- examples/large.json > /dev/null
 2. **`OverloadedStrings` 不是免费的**：它带来方便的同时也引入了类型推断的复杂性，需要显式注解或辅助函数。
 3. **Text 生态完备**：`Data.Text.Read.double` 让数字解析无需再 `unpack` 回 `String`。
 4. **端到端迁移**：从输入读取（`TIO.readFile`）到内部表示（`JsonString Text`）再到输出（`T.unpack`），每一步都要同步考虑。
+
+---
+
+## 2025-04-16 | 最终挑战 🐉：用 Megaparsec 重写
+
+### 目标
+用工业级 Parser Combinator 库 [Megaparsec](https://hackage.haskell.org/package/megaparsec) 重写 JSON 解析器，并与手写版本进行全面对比。
+
+### 实现
+
+#### 新建模块 `src/Hson/MegaParser.hs`
+Megaparsec 版本的核心代码仅约 **130 行**（不含注释），而手写版本约 **300+ 行**。差距主要来自：
+
+1. **内置的词法分析器**：`Text.Megaparsec.Char.Lexer` 提供了 `space`、`lexeme`、`symbol` 等现成工具
+2. **内置的 `between` 和 `sepBy`**：无需自己实现
+3. **自动的空格管理**：`sc`（space consumer）一旦定义，组合子自动跳过空白
+4. **不需要手动写 `Functor`/`Applicative`/`Monad`/`Alternative` 实例**
+
+#### 关键代码对比
+
+**手写版 `string` 解析器**（递归 + Applicative）：
+```haskell
+string :: Text -> Parser Text
+string expected = Parser $ \st ->
+  let inp = sInput st
+  in if T.isPrefixOf expected inp
+       then Right (expected, st { sInput = T.drop (T.length expected) inp })
+       else Left ...
+```
+
+**Megaparsec 版**：
+```haskell
+symbol :: Text -> Parser Text
+symbol = L.symbol sc
+```
+
+**手写版 `sepBy`**（需要处理承诺解析语义）：
+```haskell
+sepBy p sep = Parser $ \st -> case runParser p st of
+  ...
+```
+
+**Megaparsec 版**：
+```haskell
+pArray = JsonArray <$> between (symbol "[") (symbol "]") (pValue `sepBy` symbol ",")
+```
+
+### 性能对比
+
+用 1.6 MB 大 JSON 文件测试：
+
+| 版本 | 耗时 |
+|------|------|
+| 手写 Parser（Text 版） | **0.873s** |
+| Megaparsec 版 | **0.623s** |
+
+**结论**：Megaparsec 不仅代码更短、错误信息更好，而且**更快**。这归功于它底层的优化（如 inline 密集的解析原语、高效的状态传递、延迟错误计算等）。
+
+### 错误信息对比
+
+**手写版**：
+```
+Error at line 1, column 8: Leading zeros are not allowed in JSON numbers
+```
+
+**Megaparsec 版**：
+```
+<input>:1:8:
+  |
+1 | {"a": 01}
+  |        ^
+unexpected '1'
+```
+
+Megaparsec 自带可视化箭头指向错误位置，并支持多行上下文、彩色输出（在终端中）。工业级项目的用户体验确实更胜一筹。
+
+### 踩坑
+
+#### 坑 1：Megaparsec 的 `parse` 函数与我们的导出函数重名
+我们在 `Hson.MegaParser` 里导出了 `parse`，但它和 `Text.Megaparsec.parse` 冲突。最终把导出名改成了 `runMega`。
+
+#### 坑 2：Megaparsec 的 `State` 类型字段复杂
+我们最初想用 `runParser'` 直接操作底层 `State` 来获取剩余输入，但 `State` 构造子参数较多且版本相关。更好的方案是使用 `getInput` 组合子：
+```haskell
+runMega p input = runParser p' "<input>" input
+  where
+    p' = do result <- p; rest <- getInput; return (result, rest)
+```
+
+### 学习收获
+
+1. **核心思想完全一致**：无论是手写还是 Megaparsec，底层都是 `Functor + Applicative + Monad + Alternative`。
+2. **库的价值在于细节**：Megaparsec 把我们手动实现的 300 行基础设施压缩成了几行导入，而且在错误报告和性能上都更优。
+3. **手写不是浪费时间**：正是因为亲手实现了 `Parser` 类型类实例、状态传递、错误合并，我们才能一眼看懂 Megaparsec 的源码和文档。
+4. **工业级选择的启示**：在实际项目中，没有理由从零写 Parser Combinator 框架，但**每个优秀的库用户都应该是半个实现者**。
+
+### 项目最终状态
+
+| 挑战 | 状态 |
+|------|------|
+| 1. 字符串转义 | ✅ |
+| 2. 手写数字解析器 | ✅ |
+| 3. RFC 8259 完整合规 | ✅ |
+| 4. 精确错误报告 | ✅ |
+| 5. JSON Path 查询 | ✅ |
+| 6. FromJson 类型类 | ✅ |
+| 7. Text 性能迁移 | ✅ |
+| 🐉 最终挑战：Megaparsec 重写 | ✅ |
+
+**全部完成！** 🎉
