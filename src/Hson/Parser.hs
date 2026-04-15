@@ -42,6 +42,12 @@ satisfy p = Parser $ \input -> case input of
 char :: Char -> Parser Char
 char c = satisfy (== c)
 
+-- | 匹配任意一个字符（只要输入非空就成功）。
+anyChar :: Parser Char
+anyChar = Parser $ \input -> case input of
+  (c:cs) -> Just (c, cs)
+  []     -> Nothing
+
 -- | 精确匹配一个字符串。
 --
 -- 这是递归 + Applicative 的经典组合：
@@ -157,13 +163,34 @@ parseNumber = Parser $ \input -> case reads input of
   [(n, rest)] -> Just (JsonNumber n, rest)
   _           -> Nothing
 
--- | 解析 JSON String（简化版，暂不支持转义字符）。
+-- | 解析 JSON 字符串中的单个转义字符。
 --
--- 流程：匹配左引号 -> 读取零个或多个非引号字符 -> 匹配右引号。
+-- 支持的转义序列：\" \\ \n \t
+-- 这是挑战 1 的核心实现，展示了 Alternative 的实战用法：
+-- 先尝试匹配转义序列，如果输入不是反斜杠开头，则整体失败。
+parseEscapedChar :: Parser Char
+parseEscapedChar = do
+  _ <- char '\\'
+  c <- anyChar
+  case c of
+    '"'  -> return '"'
+    '\\' -> return '\\'
+    'n'  -> return '\n'
+    't'  -> return '\t'
+    _    -> fail $ "Unknown escape sequence: \\ " ++ [c]
+
+-- | 解析 JSON String（支持转义字符）。
+--
+-- 流程：匹配左引号 -> 读取零个或多个（转义字符 或 普通非引号字符） -> 匹配右引号。
+--
+-- 关键组合：many (parseEscapedChar <|> satisfy (/= '"'))
+--   - parseEscapedChar 处理 \", \\, \n, \t
+--   - satisfy (/= '"') 处理普通字符
+--   - <|> 让解析器在每一步自动选择正确的分支
 parseString :: Parser JsonValue
 parseString = do
   _ <- char '"'
-  s <- many (satisfy (/= '"'))
+  s <- many (parseEscapedChar <|> satisfy (/= '"'))
   _ <- char '"'
   return $ JsonString s
 

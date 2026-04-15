@@ -12,7 +12,7 @@ prettyPrint = go 0
     go _ JsonNull       = "null"
     go _ (JsonBool b)   = if b then "true" else "false"
     go _ (JsonNumber n) = show n
-    go _ (JsonString s) = "\"" ++ s ++ "\""
+    go _ (JsonString s) = "\"" ++ escapeString s ++ "\""
     go _ (JsonArray []) = "[]"
     go n (JsonArray xs) =
       "[\n"
@@ -25,6 +25,14 @@ prettyPrint = go 0
       ++ "\n" ++ indent n ++ "}"
 
     indent d = replicate (d * 2) ' '
+
+    escapeString :: String -> String
+    escapeString = concatMap $ \c -> case c of
+      '"'  -> "\\\""
+      '\\' -> "\\\\"
+      '\n' -> "\\n"
+      '\t' -> "\\t"
+      _    -> [c]
 
 main :: IO ()
 main = do

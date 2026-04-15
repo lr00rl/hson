@@ -114,16 +114,17 @@ See [`src/Json/Parser.hs`](./src/Json/Parser.hs) for detailed, line-by-line comm
 
 ## 🏔️ Learning Roadmap
 
-We prepared 6 progressive challenges in [`CHALLENGES.md`](./CHALLENGES.md):
+We prepared 6 progressive challenges in [`CHALLENGES.md`](./CHALLENGES.md), and record detailed notes for each iteration in [`LEARNING_LOG.md`](./LEARNING_LOG.md).
 
-1. **Escape sequences in strings** — `\"`, `\\`, `\n`, `\t`
-2. **Hand-written number parser** — integers, decimals, negatives, scientific notation
-3. **Error reporting** — upgrade from `Maybe` to `Either ParseError` with line/column info
-4. **JSON Path queries** — implement `.data.users[0].name`-style lookups
-5. **Generic deserialization** — write a `FromJson` type class
-6. **Performance** — migrate from `String` to `Data.Text`
-
-**Final Boss:** Re-implement everything with [Megaparsec](https://hackage.haskell.org/package/megaparsec) and compare the experience.
+| # | Challenge | Status |
+|---|-----------|--------|
+| 1 | **Escape sequences in strings** — `\"`, `\\`, `\n`, `\t` | ✅ Completed |
+| 2 | **Hand-written number parser** — integers, decimals, negatives, scientific notation | 🚧 Pending |
+| 3 | **Error reporting** — upgrade from `Maybe` to `Either ParseError` with line/column info | 🚧 Pending |
+| 4 | **JSON Path queries** — implement `.data.users[0].name`-style lookups | 🚧 Pending |
+| 5 | **Generic deserialization** — write a `FromJson` type class | 🚧 Pending |
+| 6 | **Performance** — migrate from `String` to `Data.Text` | 🚧 Pending |
+| 🐉 | **Final Boss:** Re-implement with [Megaparsec](https://hackage.haskell.org/package/megaparsec) | 🚧 Pending |
 
 ---
 

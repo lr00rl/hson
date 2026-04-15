@@ -6,7 +6,7 @@
 
 ---
 
-## 挑战 1：支持字符串转义
+## ✅ 挑战 1：支持字符串转义（已完成）
 
 ### 现状
 当前 `parseString` 一遇到 `"` 就结束，完全无法处理字符串内部包含 `"` 的情况。例如：
@@ -24,28 +24,35 @@
 - `\n` -> 换行符
 - `\t` -> 制表符
 
-### 提示
-你可以先写一个 `parseEscapedChar :: Parser Char`：
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心改动：
+1. 新增 `anyChar` 解析器
+2. 新增 `parseEscapedChar`：先匹配反斜杠，再用 `case` 映射后续字符
+3. 修改 `parseString`：
+   ```haskell
+   s <- many (parseEscapedChar <|> satisfy (/= '"'))
+   ```
+4. 同步修复 `prettyPrint` 中的字符串输出，加入 `escapeString` 保证输出仍是合法 JSON
+
+### 关键代码
 ```haskell
 parseEscapedChar = do
   _ <- char '\\'
-  c <- anyChar  -- 你需要先实现一个匹配任意字符的解析器
+  c <- anyChar
   case c of
-    'n' -> return '\n'
-    't' -> return '\t'
-    '"' -> return '"'
+    'n'  -> return '\n'
+    't'  -> return '\t'
+    '"'  -> return '"'
     '\\' -> return '\\'
-    _   -> fail "Unknown escape sequence"
-```
-
-然后在 `parseString` 的 `many` 里使用 `<|>` 组合：
-```haskell
-s <- many (parseEscapedChar <|> satisfy (/= '"'))
+    _    -> fail "Unknown escape sequence"
 ```
 
 ### 学习目标
-- `Alternative` 的实际应用
+- `Alternative` 的实际应用（`<|>` 的回退机制）
 - 在 Monad 中处理分支逻辑
+- 解析器与序列化器（pretty-print）的对称性设计
 
 ---
 
