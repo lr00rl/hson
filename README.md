@@ -124,7 +124,7 @@ We prepared 6 progressive challenges in [`CHALLENGES.md`](./CHALLENGES.md), and 
 | 4 | **Error reporting** — upgrade from `Maybe` to `Either ParseError` with line/column info | ✅ Completed |
 | 5 | **JSON Path queries** — implement `.data.users[0].name`-style lookups | ✅ Completed |
 | 6 | **Generic deserialization** — write a `FromJson` type class | ✅ Completed |
-| 7 | **Performance** — migrate from `String` to `Data.Text` | 🚧 Pending |
+| 7 | **Performance** — migrate from `String` to `Data.Text` | ✅ Completed |
 | 🐉 | **Final Boss:** Re-implement with [Megaparsec](https://hackage.haskell.org/package/megaparsec) | 🚧 Pending |
 
 ---

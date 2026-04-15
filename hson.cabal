@@ -26,6 +26,7 @@ library
   hs-source-dirs:      src
   default-language:    Haskell2010
   build-depends:       base >=4.14 && <5
+                     , text >=1.2 && <3
   ghc-options:         -Wall
 
 executable hson
@@ -33,5 +34,6 @@ executable hson
   hs-source-dirs:      app
   default-language:    Haskell2010
   build-depends:       base >=4.14 && <5
+                     , text >=1.2 && <3
                      , hson
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N

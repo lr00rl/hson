@@ -11,7 +11,10 @@ Parser Combinator 框架，并用它解析完整的 JSON。
   4. Monad：让后一步解析依赖前一步结果（>>= / do）
   5. Alternative：实现分支(<|>)、重复(many)、可选(optional)
   6. 精确错误报告：Either ParseError + 行列号追踪
+  7. Data.Text 迁移：用高效的文本表示替代 [Char]
 -}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Hson.Parser
   ( Parser(..)
   , ParseError(..)
@@ -21,6 +24,9 @@ module Hson.Parser
 
 import Control.Applicative (Alternative(..), optional)
 import Data.Char (chr, ord)
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Read as TR
 import Hson.Types (JsonValue(..))
 
 -- ========================================================================
@@ -28,8 +34,10 @@ import Hson.Types (JsonValue(..))
 -- ========================================================================
 
 -- | 解析状态，包含剩余输入、当前行号和列号。
+--
+-- 使用 Data.Text 替代 String，避免 [Char] 链表的线性索引开销。
 data State = State
-  { sInput :: String  -- ^ 剩余未解析的输入
+  { sInput :: Text    -- ^ 剩余未解析的输入
   , sLine  :: Int     -- ^ 当前行号（从 1 开始）
   , sCol   :: Int     -- ^ 当前列号（从 1 开始）
   } deriving (Show)
@@ -39,23 +47,16 @@ data ParseError = ParseError
   { peMessage :: String  -- ^ 错误描述
   , peLine    :: Int     -- ^ 错误发生的行号
   , peCol     :: Int     -- ^ 错误发生的列号
-  , peInput   :: String  -- ^ 错误发生时的剩余输入（用于调试）
+  , peInput   :: Text    -- ^ 错误发生时的剩余输入（用于调试）
   } deriving (Eq, Show)
 
 -- | 根据消费的字符更新行列号。
 advanceState :: State -> Char -> State
 advanceState st c
-  | c == '\n' = State (tailInput) (sLine st + 1) 1
-  | otherwise = State (tailInput) (sLine st) (sCol st + 1)
-  where
-    tailInput = case sInput st of
-      (_:cs) -> cs
-      []     -> []
+  | c == '\n' = State (T.tail (sInput st)) (sLine st + 1) 1
+  | otherwise = State (T.tail (sInput st)) (sLine st) (sCol st + 1)
 
 -- | 选择"走得更远"的错误。
---
--- 在 Parser Combinator 的 "或" 分支中，如果两边都失败，
--- 通常意味着用户期望的是"走得最远"的那个语法结构。
 farthestError :: ParseError -> ParseError -> ParseError
 farthestError e1 e2
   | peLine e1 > peLine e2 = e1
@@ -68,51 +69,54 @@ farthestError e1 e2
 -- ========================================================================
 
 -- | 解析器类型。
---
--- 给它一个 State，它要么失败并返回 ParseError（带行列号），
--- 要么成功并返回（结果, 新状态）。
 newtype Parser a = Parser { runParser :: State -> Either ParseError (a, State) }
 
--- | 便捷的入口函数：从字符串开始解析。
-parse :: Parser a -> String -> Either ParseError (a, String)
+-- | 便捷的入口函数：从 Text 开始解析。
+parse :: Parser a -> Text -> Either ParseError (a, Text)
 parse p input = case runParser p (State input 1 1) of
   Right (x, st) -> Right (x, sInput st)
   Left err      -> Left err
 
 -- | 解析一个满足条件的字符。
--- 如果输入首字符满足谓词 p，则消费它并返回；否则失败，带上当前位置信息。
 satisfy :: (Char -> Bool) -> Parser Char
-satisfy p = Parser $ \st -> case sInput st of
-  (c:_) | p c -> Right (c, advanceState st c)
-  (c:cs)      -> Left $ ParseError ("Unexpected character: " ++ show c ++ " (expected something else)") (sLine st) (sCol st) (c:cs)
-  []          -> Left $ ParseError "Unexpected end of input" (sLine st) (sCol st) []
+satisfy p = Parser $ \st -> case T.uncons (sInput st) of
+  Just (c, _) | p c -> Right (c, advanceState st c)
+  Just (c, _)       -> Left $ ParseError ("Unexpected character: " ++ show c ++ " (expected something else)") (sLine st) (sCol st) (sInput st)
+  Nothing           -> Left $ ParseError "Unexpected end of input" (sLine st) (sCol st) (sInput st)
 
 -- | 精确匹配一个字符。
 char :: Char -> Parser Char
-char expected = Parser $ \st -> case sInput st of
-  (c:_) | c == expected -> Right (c, advanceState st c)
-  (c:cs)                -> Left $ ParseError ("Expected '" ++ [expected] ++ "' but found " ++ show c) (sLine st) (sCol st) (c:cs)
-  []                    -> Left $ ParseError ("Expected '" ++ [expected] ++ "' but reached end of input") (sLine st) (sCol st) []
+char expected = Parser $ \st -> case T.uncons (sInput st) of
+  Just (c, _) | c == expected -> Right (c, advanceState st c)
+  Just (c, _)                 -> Left $ ParseError ("Expected '" ++ [expected] ++ "' but found " ++ show c) (sLine st) (sCol st) (sInput st)
+  Nothing                     -> Left $ ParseError ("Expected '" ++ [expected] ++ "' but reached end of input") (sLine st) (sCol st) (sInput st)
 
 -- | 匹配任意一个字符（只要输入非空就成功）。
 anyChar :: Parser Char
-anyChar = Parser $ \st -> case sInput st of
-  (c:_) -> Right (c, advanceState st c)
-  []    -> Left $ ParseError "Unexpected end of input" (sLine st) (sCol st) []
+anyChar = Parser $ \st -> case T.uncons (sInput st) of
+  Just (c, _) -> Right (c, advanceState st c)
+  Nothing     -> Left $ ParseError "Unexpected end of input" (sLine st) (sCol st) (sInput st)
 
--- | 精确匹配一个字符串。
-string :: String -> Parser String
-string []     = pure []
-string (c:cs) = (:) <$> char c <*> string cs
+-- | 精确匹配一个 Text 前缀。
+string :: Text -> Parser Text
+string expected = Parser $ \st ->
+  let inp = sInput st
+  in if T.isPrefixOf expected inp
+       then Right (expected, st { sInput = T.drop (T.length expected) inp })
+       else Left $ ParseError ("Expected " ++ show expected) (sLine st) (sCol st) inp
 
 -- | 重复运行解析器 n 次，收集结果列表。
 count :: Int -> Parser a -> Parser [a]
 count n _ | n <= 0    = pure []
 count n p             = (:) <$> p <*> count (n - 1) p
 
+-- | 字符是否在指定的字符串中（辅助函数，避免 OverloadedStrings 带来的类型歧义）。
+charIn :: String -> Char -> Bool
+charIn chars c = c `elem` chars
+
 -- | 消费零个或多个空白字符。
 spaces :: Parser ()
-spaces = () <$ many (satisfy (`elem` " \t\n\r"))
+spaces = () <$ many (satisfy (charIn " \t\n\r"))
 
 -- | 词法包裹器：自动跳过解析器前后的空白字符。
 lexeme :: Parser a -> Parser a
@@ -153,10 +157,6 @@ instance MonadFail Parser where
 -- Part 4: 组合子工具
 -- ========================================================================
 
--- | 解析逗号分隔的列表。
---
--- 关键语义：如果 p 在消费了输入后失败，错误会被传播（不会回退为空列表）。
--- 只有 p 在完全没有消费输入的情况下失败，才返回空列表。
 sepBy :: Parser a -> Parser sep -> Parser [a]
 sepBy p sep = Parser $ \st -> case runParser p st of
   Right (x, st1) -> case runParser (many (sep *> p)) st1 of
@@ -178,42 +178,46 @@ parseBool :: Parser JsonValue
 parseBool = JsonBool True  <$ string "true"
         <|> JsonBool False <$ string "false"
 
+-- | 解析 JSON Number（严格遵循 RFC 8259）。
+--
+-- 使用 Data.Text.Read.double 进行高性能数字转换。
 parseNumber :: Parser JsonValue
 parseNumber = do
   sign     <- optional (char '-')
   intPart  <- parseInt
   fracPart <- optional parseFrac
   expPart  <- optional parseExp
-  let numStr = maybe "" (:[]) sign ++ intPart ++ maybe "" id fracPart ++ maybe "" id expPart
-  return $ JsonNumber (read numStr)
+  let numTxt = maybe T.empty (T.singleton) sign <> intPart <> maybe T.empty id fracPart <> maybe T.empty id expPart
+  case TR.double numTxt of
+    Right (n, rest) | T.null rest -> return $ JsonNumber n
+    _                             -> fail "Invalid number format"
   where
     parseInt = do
-      first <- satisfy (`elem` "0123456789")
+      first <- satisfy (charIn "0123456789")
       if first == '0'
         then do
-          -- RFC 8259: 前导零后面不能紧跟数字
-          Parser $ \st -> case sInput st of
-            (c:_) | c `elem` "0123456789" ->
+          Parser $ \st -> case T.uncons (sInput st) of
+            Just (c, _) | charIn "0123456789" c ->
               Left $ ParseError "Leading zeros are not allowed in JSON numbers" (sLine st) (sCol st) (sInput st)
             _ -> Right ((), st)
-          return "0"
+          return (T.singleton '0')
         else do
-          rest <- many (satisfy (`elem` "0123456789"))
-          return (first : rest)
+          rest <- many (satisfy (charIn "0123456789"))
+          return (T.pack (first : rest))
 
     parseFrac = do
       _      <- char '.'
-      digits <- some (satisfy (`elem` "0123456789"))
-      return ('.' : digits)
+      digits <- some (satisfy (charIn "0123456789"))
+      return (T.cons '.' (T.pack digits))
 
     parseExp = do
-      e      <- satisfy (`elem` "eE")
-      sign   <- optional (satisfy (`elem` "+-"))
-      digits <- some (satisfy (`elem` "0123456789"))
-      return (e : maybe "" (:[]) sign ++ digits)
+      e      <- satisfy (charIn "eE")
+      sign'  <- optional (satisfy (charIn "+-"))
+      digits <- some (satisfy (charIn "0123456789"))
+      return (T.pack (e : maybe [] (:[]) sign' ++ digits))
 
 hexDigit :: Parser Char
-hexDigit = satisfy (`elem` "0123456789abcdefABCDEF")
+hexDigit = satisfy (charIn "0123456789abcdefABCDEF")
 
 parseUnicodeEscape :: Parser Char
 parseUnicodeEscape = do
@@ -254,7 +258,7 @@ parseString = do
   _ <- char '"'
   s <- many (parseEscapedChar <|> satisfy isUnescaped)
   _ <- char '"'
-  return $ JsonString s
+  return $ JsonString (T.pack s)
 
 parseArray :: Parser JsonValue
 parseArray = do

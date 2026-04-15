@@ -481,3 +481,106 @@ instance FromJson User where
 2. **组合即力量**：`Applicative` 让多个 `Either String a` 的组合看起来像同步代码，但底层是自动的错误短路。
 3. **类型同义词的陷阱**：`String = [Char]` 在实例推导时会产生重叠，需要用 `OVERLAPPING` pragma 显式控制优先级。
 4. **从零到 aeson**：我们现在理解了一个简化版 `aeson` 的核心原理。工业级库只是在这个骨架上增加了泛型推导（Generics）和更完善的错误堆栈。
+
+---
+
+## 2025-04-16 | 挑战 7：性能优化 — 从 String 到 Data.Text
+
+### 目标
+将项目中的 `String`（即 `[Char]` 链表）全面替换为 `Data.Text`，提升解析大文件时的内存和速度表现。
+
+### 核心改动
+
+#### 1. `hson.cabal` 引入 `text` 依赖
+```cabal
+build-depends: base >=4.14 && <5, text >=1.2 && <3
+```
+
+#### 2. `Hson.Types`：键和字符串值改用 `Text`
+```haskell
+data JsonValue
+  = ...
+  | JsonString Text
+  | JsonObject [(Text, JsonValue)]
+```
+
+#### 3. `Hson.Parser`：解析器核心输入从 `String` 改为 `Text`
+
+**State 类型更新**：
+```haskell
+data State = State { sInput :: Text, sLine :: Int, sCol :: Int }
+```
+
+**字符消费**：原来用列表模式匹配 `(c:cs)`，现在用 `T.uncons`：
+```haskell
+satisfy p = Parser $ \st -> case T.uncons (sInput st) of
+  Just (c, _) | p c -> Right (c, advanceState st c)
+  ...
+```
+
+**字符串匹配**：原来用递归 `char` 组合，现在直接用 `T.isPrefixOf`：
+```haskell
+string :: Text -> Parser Text
+string expected = Parser $ \st ->
+  let inp = sInput st
+  in if T.isPrefixOf expected inp
+       then Right (expected, st { sInput = T.drop (T.length expected) inp })
+       else Left ...
+```
+
+**数字转换**：从 `read` 改为 `Data.Text.Read.double`：
+```haskell
+case TR.double numTxt of
+  Right (n, rest) | T.null rest -> return $ JsonNumber n
+```
+
+#### 4. `Hson.Query`
+- `parsePath` 的输入和 `Key` 构造子全部改为 `Text`
+- `T.break` 替代 `span`，`T.uncons` 替代模式匹配
+
+#### 5. `Hson.Class`
+- `fromJson (JsonString s)` 对 `String` 实例需要 `T.unpack`
+- 新增 `FromJson Text` 实例，实现零拷贝反序列化
+- `withObject` 和 `.:` / `.:?` 的键类型改为 `Text`
+
+#### 6. `app/Main.hs`
+- 文件读取从 `readFile` 改为 `Data.Text.IO.readFile`
+- `prettyPrint` 中对 `JsonString` 使用 `T.unpack` 输出
+- 命令行路径查询参数用 `T.pack` 转换
+
+### 踩坑
+
+#### 坑 1：`OverloadedStrings` 与 `elem` 的类型歧义
+开启 `OverloadedStrings` 后，`"abc"` 既可以是 `String` 也可以是 `Text`。当写 `satisfy (`elem` "0123456789")` 时，GHC 无法推断 `"0123456789"` 到底是哪个 `Foldable`。
+
+**修复**：写一个显式类型的辅助函数：
+```haskell
+charIn :: String -> Char -> Bool
+charIn chars c = c `elem` chars
+```
+
+#### 坑 2：`String` 实例与 `[a]` 实例的重叠
+在 `Class.hs` 中，`instance FromJson String` 和 `instance FromJson [a]` 仍然需要 `{-# OVERLAPPING #-}` pragma，因为 `String = [Char]` 的语义没有改变。
+
+### 性能测试
+
+生成 1.6 MB 的大 JSON 文件（包含 10,000 个用户对象），用 `time` 测试：
+
+```bash
+time cabal run hson -- examples/large.json > /dev/null
+# real  0m0.793s
+# user  0m0.791s
+# sys   0m0.207s
+```
+
+对于一个手写、零依赖的 Parser Combinator，在 GHC 9.4.8 上不到 1 秒解析 1.6 MB 是完全可以接受的性能。主要的性能收益来自：
+- `Text` 的紧凑内存布局（每个字符 1-4 字节，而非链表指针）
+- `T.uncons` 和 `T.isPrefixOf` 的 O(1) / O(n) 批量操作
+- 避免了 `String` 的堆分配和 GC 压力
+
+### 学习收获
+
+1. **String 是链表，Text 是数组**：在解析器这种频繁索引和切片的场景中，数据结构的选择直接决定性能天花板。
+2. **`OverloadedStrings` 不是免费的**：它带来方便的同时也引入了类型推断的复杂性，需要显式注解或辅助函数。
+3. **Text 生态完备**：`Data.Text.Read.double` 让数字解析无需再 `unpack` 回 `String`。
+4. **端到端迁移**：从输入读取（`TIO.readFile`）到内部表示（`JsonString Text`）再到输出（`T.unpack`），每一步都要同步考虑。

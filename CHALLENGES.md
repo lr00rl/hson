@@ -267,7 +267,7 @@ data User = User { ... } deriving (Generic, FromJson)
 
 ---
 
-## 挑战 6：性能优化 — 从 String 到 Text
+## ✅ 挑战 6：性能优化 — 从 String 到 Text（已完成）
 
 ### 现状
 我们使用的是 Haskell 的 `String`，本质是 `[Char]` 链表，性能很差。
@@ -276,11 +276,35 @@ data User = User { ... } deriving (Generic, FromJson)
 把整个解析器迁移到 `Data.Text`：
 1. 把 `String` 全部换成 `Text`
 2. 输入不再用 `String -> Maybe (...)`，而是用 `Text` 的索引方式
-3. 对比解析大 JSON 文件时的性能差异（可以用 `time` 命令）
+3. 对比解析大 JSON 文件时的性能差异
+
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心改动：
+- `hson.cabal` 引入 `text` 依赖
+- `Hson.Types`：`JsonString String` → `JsonString Text`，`JsonObject` 键也改为 `Text`
+- `Hson.Parser`：`State` 用 `Text`，`T.uncons` 替代列表模式匹配，`T.isPrefixOf` 替代递归 `string` 解析，`Data.Text.Read.double` 替代 `read`
+- `Hson.Query`、`Hson.Class`、`app/Main.hs` 同步迁移
+
+### 性能测试
+生成 1.6 MB 大 JSON（10,000 个对象）：
+```bash
+time cabal run hson -- examples/large.json > /dev/null
+# real  0m0.793s
+```
+
+### 踩坑
+`OverloadedStrings` 导致 `"abc"` 的类型歧义，`satisfy (`elem` "0123456789")` 无法推断。解决方案：
+```haskell
+charIn :: String -> Char -> Bool
+charIn chars c = c `elem` chars
+```
 
 ### 学习目标
-- 理解 Haskell 中 `String`、`Text`、`ByteString` 的区别
+- 理解 Haskell 中 `String`（链表）、`Text`（紧凑 UTF-16/UTF-8 数组）、`ByteString`（原始字节）的区别
 - 工业级 Haskell 项目的性能意识
+- `OverloadedStrings` 的便利与代价
 
 ---
 
