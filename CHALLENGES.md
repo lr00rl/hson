@@ -218,40 +218,52 @@ cabal run hson -- examples/nested.json .users[0].name
 
 ---
 
-## 挑战 5：泛型反序列化 — FromJson 类型类
+## ✅ 挑战 5：泛型反序列化 — FromJson 类型类（已完成）
 
 ### 目标
-实现一个类型类 `FromJson`，让 Haskell 能自动把 `JsonValue` 转换成自定义的 Record 类型：
+实现一个类型类 `FromJson`，让 Haskell 能自动把 `JsonValue` 转换成自定义的 Record 类型。
 
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心实现位于 `src/Hson/Class.hs`：
+1. **类型类定义**：`class FromJson a where fromJson :: JsonValue -> Either String a`
+2. **基础实例**：`Bool`、`Int`、`Double`、`String`（`{-# OVERLAPPING #-}`）、`[a]`、`Maybe a`
+3. **辅助 API**（aeson 风格）：
+   - `withObject` / `withArray`
+   - `.:`  读取必填字段
+   - `.:?` 读取可选字段
+4. **Record 手动实例示例**：
+   ```haskell
+   instance FromJson User where
+     fromJson = withObject "User" $ \o ->
+       User <$> o .: "name" <*> o .: "age" <*> o .: "active" <*> o .:? "email"
+   ```
+
+### 关键踩坑
+`String` 是 `[Char]` 的类型别名，如果不写独立的 `FromJson String` 实例，它会匹配 `[a]` 实例并期望 JSON 数组。解决方案：
 ```haskell
-class FromJson a where
-  fromJson :: JsonValue -> Either String a
-
-data User = User
-  { userName  :: String
-  , userAge   :: Int
-  , userEmail :: Maybe String
-  } deriving (Show)
-
-instance FromJson User where
-  fromJson (JsonObject pairs) = do
-    name  <- lookupField "name" pairs >>= asString
-    age   <- lookupField "age" pairs >>= asInt
-    email <- lookupOptional "email" pairs >>= traverse asString
-    return $ User name age email
-  fromJson _ = Left "Expected object"
+instance {-# OVERLAPPING #-} FromJson String where
+  fromJson (JsonString s) = Right s
 ```
 
-### 进阶目标（地狱难度）
-研究 `GHC.Generics`，让 `User` 类型可以自动派生 `FromJson`：
+### 验证示例
 ```haskell
-data User = User { ... } deriving (Generic, FromJson)
+fromJson jsonValue :: Either String User
+-- Right (User {userName = "Alice", userAge = 30, userActive = True, userEmail = Just "alice@example.com"})
 ```
 
 ### 学习目标
 - Haskell 类型类的深层设计
-- `Maybe`、`Either`、`traverse` 等函数的组合
-- 泛型编程（Generics）的入门
+- `Applicative` 组合多个 `Either` 的自动短路机制
+- 类型同义词（`String = [Char]`）在实例推导中的特殊处理
+- 从零理解 `aeson` 的核心骨架
+
+### 进阶目标（地狱难度，留待未来）
+研究 `GHC.Generics`，让 `User` 类型可以自动派生 `FromJson`：
+```haskell
+data User = User { ... } deriving (Generic, FromJson)
+```
 
 ---
 

@@ -406,3 +406,78 @@ cabal run hson -- examples/nested.json .users[0].name
 2. **不是所有解析都需要 Parser Combinator**：对于简单的、无回溯的线性语法，`span` + 递归往往更清晰。
 3. **`Maybe` Monad 的链式失败**：`lookup k pairs >>= query rest` 让错误传播变得零成本，代码专注于"成功路径"。
 4. **CLI 设计要自然**：把查询路径作为第二个命令行参数，符合 Unix 工具的使用直觉。
+
+---
+
+## 2025-04-16 | 挑战 6：Generic 反序列化 — FromJson 类型类
+
+### 目标
+实现一个 `FromJson` 类型类，让 Haskell 能自动把 `JsonValue` 转换成自定义 Record 类型。
+
+### 设计
+
+#### 1. 类型类定义
+```haskell
+class FromJson a where
+  fromJson :: JsonValue -> Either String a
+```
+
+#### 2. 基础实例
+为 `Bool`、`Int`、`Double`、`String`、`[a]`、`Maybe a` 分别实现实例。
+
+其中 `String` 是一个特殊案例，因为 `String` 在 Haskell 中只是 `[Char]` 的类型别名。如果只为 `[a]` 写实例，那么 `String` 会期望 JSON 数组而不是 JSON 字符串。因此需要显式为 `String` 写实例，并标记 `{-# OVERLAPPING #-}` 让它优先于 `[a]` 实例。
+
+```haskell
+instance {-# OVERLAPPING #-} FromJson String where
+  fromJson (JsonString s) = Right s
+  fromJson _              = Left "Expected string"
+```
+
+#### 3. 辅助函数：`withObject`、`withArray`、`.:`、`.:?`
+这些 API 设计深受 `aeson` 启发：
+
+```haskell
+withObject :: String -> ([(String, JsonValue)] -> Either String a) -> JsonValue -> Either String a
+(.:)  :: FromJson a => [(String, JsonValue)] -> String -> Either String a        -- 必填
+(.:?) :: FromJson a => [(String, JsonValue)] -> String -> Either String (Maybe a) -- 可选
+```
+
+#### 4. Record 手动实例示例
+```haskell
+data User = User
+  { userName :: String
+  , userAge :: Int
+  , userActive :: Bool
+  , userEmail :: Maybe String
+  } deriving (Show)
+
+instance FromJson User where
+  fromJson = withObject "User" $ \o ->
+    User <$> o .: "name" <*> o .: "age" <*> o .: "active" <*> o .:? "email"
+```
+
+这里用到了 `Applicative` 的 `<*>`：四个字段的解析都是 `Either String a`，它们可以无缝组合成一个 `Either String User`。如果任何一个字段失败，整个组合立即返回 `Left` 错误。
+
+### 踩坑
+
+#### 坑：`String` 与 `[a]` 的 Overlapping Instances
+第一次尝试时，没有为 `String` 写独立实例，而是指望 `[a]` 自动覆盖 `[Char]`。结果 `String` 的 JSON 反序列化变成了"期望数组"。
+
+**修复**：显式写 `instance {-# OVERLAPPING #-} FromJson String`。
+
+这也让我们学到了 Haskell 中 `String` 的真相：它不是一个独立的类型，而是 `type String = [Char]`。
+
+### 验证结果
+
+| 场景 | 结果 |
+|------|------|
+| 完整 JSON 反序列化 | `Right (User {userName = "Alice", userAge = 30, ...})` ✅ |
+| 缺少可选字段 `email` | `Right (User {..., userEmail = Nothing})` ✅ |
+| 类型不匹配（`age` 为字符串） | `Left "Expected number"` ✅ |
+
+### 学习收获
+
+1. **类型类是真正的接口**：`FromJson` 让任何类型都能声明"我可以从 JSON 来"，这比面向对象的继承更灵活。
+2. **组合即力量**：`Applicative` 让多个 `Either String a` 的组合看起来像同步代码，但底层是自动的错误短路。
+3. **类型同义词的陷阱**：`String = [Char]` 在实例推导时会产生重叠，需要用 `OVERLAPPING` pragma 显式控制优先级。
+4. **从零到 aeson**：我们现在理解了一个简化版 `aeson` 的核心原理。工业级库只是在这个骨架上增加了泛型推导（Generics）和更完善的错误堆栈。
