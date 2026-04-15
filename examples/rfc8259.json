@@ -1,0 +1,19 @@
+{
+  "string_escapes": "\b\f\n\r\t\\\/\"",
+  "unicode": "\u0048\u0065\u006c\u006c\u006f",
+  "surrogate": "\uD834\uDD1E",
+  "numbers": {
+    "zero": 0,
+    "neg_zero": -0,
+    "integer": 42,
+    "negative": -42,
+    "fraction": 3.14,
+    "neg_fraction": -0.5,
+    "exp_small": 1e5,
+    "exp_neg": 1E-5,
+    "exp_plus": 2.5e+3,
+    "complex": -1.23e+4
+  },
+  "empty": {},
+  "array": []
+}

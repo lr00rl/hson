@@ -1,5 +1,5 @@
 {-|
-模块：Json.Parser
+模块：Hson.Parser
 
 这是整个项目最核心的教学模块。我们在这里从零实现了一个
 Parser Combinator 框架，并用它解析完整的 JSON。
@@ -16,7 +16,8 @@ module Hson.Parser
   , parseJson
   ) where
 
-import Control.Applicative (Alternative(..))
+import Control.Applicative (Alternative(..), optional)
+import Data.Char (chr, ord)
 import Hson.Types (JsonValue(..))
 
 -- ========================================================================
@@ -57,6 +58,11 @@ anyChar = Parser $ \input -> case input of
 string :: String -> Parser String
 string []     = pure []
 string (c:cs) = (:) <$> char c <*> string cs
+
+-- | 重复运行解析器 n 次，收集结果列表。
+count :: Int -> Parser a -> Parser [a]
+count n _ | n <= 0    = pure []
+count n p             = (:) <$> p <*> count (n - 1) p
 
 -- | 消费零个或多个空白字符（空格、制表符、换行、回车）。
 spaces :: Parser ()
@@ -103,12 +109,12 @@ instance Monad Parser where
     Just (x, rest) -> runParser (f x) rest
     Nothing        -> Nothing
 
--- | Alternative：实现“或”逻辑、失败、重复。
+-- | Alternative：实现"或"逻辑、失败、重复。
 --
 -- `empty` 是永远失败的解析器。
 -- `p <|> q` 先尝试 p，如果 p 失败则回退（backtrack）并尝试 q。
 -- `many p` 和 `some p` 由 Alternative 默认提供，分别表示
--- “零个或多个 p”和“一个或多个 p”。
+-- "零个或多个 p"和"一个或多个 p"。
 instance Alternative Parser where
   empty = Parser $ const Nothing
   p <|> q = Parser $ \input -> case runParser p input of
@@ -128,7 +134,7 @@ instance MonadFail Parser where
 
 -- | 解析逗号分隔的列表。
 --
--- 这是 Parser Combinator 的“Hello World”：
+-- 这是 Parser Combinator 的"Hello World"：
 --   sepBy p sep = (:) <$> p <*> many (sep *> p) <|> pure []
 --
 -- 解读：
@@ -140,7 +146,7 @@ sepBy :: Parser a -> Parser sep -> Parser [a]
 sepBy p sep = (:) <$> p <*> many (sep *> p) <|> pure []
 
 -- ========================================================================
--- Part 4: JSON 专用解析器
+-- Part 4: JSON 专用解析器（严格遵循 RFC 8259）
 -- ========================================================================
 
 -- | 解析 JSON Null。
@@ -154,20 +160,72 @@ parseBool :: Parser JsonValue
 parseBool = JsonBool True  <$ string "true"
         <|> JsonBool False <$ string "false"
 
--- | 解析 JSON Number（简化版）。
+-- | 解析 JSON Number（严格遵循 RFC 8259）。
 --
--- 这里我们“借用”了 Haskell 内置的 `reads` 函数来识别数字。
--- 在挑战 2 中，你会尝试完全手写这个数字解析器。
+-- ABNF（RFC 8259 Section 6）：
+--   number = [ minus ] int [ frac ] [ exp ]
+--   int    = zero / ( digit1-9 *DIGIT )
+--   frac   = decimal-point 1*DIGIT
+--   exp    = e [ minus / plus ] 1*DIGIT
+--
+-- 非法示例：01, 1., .5, 1e, 1e+
 parseNumber :: Parser JsonValue
-parseNumber = Parser $ \input -> case reads input of
-  [(n, rest)] -> Just (JsonNumber n, rest)
-  _           -> Nothing
+parseNumber = do
+  sign     <- optional (char '-')
+  intPart  <- parseInt
+  fracPart <- optional parseFrac
+  expPart  <- optional parseExp
+  let numStr = maybe "" (:[]) sign ++ intPart ++ maybe "" id fracPart ++ maybe "" id expPart
+  return $ JsonNumber (read numStr)
+  where
+    parseInt = do
+      first <- satisfy (`elem` "0123456789")
+      if first == '0'
+        then return "0"
+        else do
+          rest <- many (satisfy (`elem` "0123456789"))
+          return (first : rest)
+
+    parseFrac = do
+      _      <- char '.'
+      digits <- some (satisfy (`elem` "0123456789"))
+      return ('.' : digits)
+
+    parseExp = do
+      e      <- satisfy (`elem` "eE")
+      sign   <- optional (satisfy (`elem` "+-"))
+      digits <- some (satisfy (`elem` "0123456789"))
+      return (e : maybe "" (:[]) sign ++ digits)
+
+-- | 解析十六进制数字字符。
+hexDigit :: Parser Char
+hexDigit = satisfy (`elem` "0123456789abcdefABCDEF")
+
+-- | 解析 \uXXXX Unicode 转义序列。
+--
+-- 根据 RFC 8259，如果 \uXXXX 是一个高代理项（U+D800-U+DBFF），
+-- 则后面必须紧跟一个低代理项（\uDC00-\uDFFF），两者组合成一个
+-- Unicode code point（如 U+1D11E 表示为 \uD834\uDD1E）。
+parseUnicodeEscape :: Parser Char
+parseUnicodeEscape = do
+  hex <- count 4 hexDigit
+  let code = read ("0x" ++ hex) :: Int
+  if code >= 0xD800 && code <= 0xDBFF
+    then do
+      -- 高代理项，必须紧跟低代理项
+      _    <- char '\\'
+      _    <- char 'u'
+      hex2 <- count 4 hexDigit
+      let low = read ("0x" ++ hex2) :: Int
+      if low >= 0xDC00 && low <= 0xDFFF
+        then return $ chr $ 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
+        else fail "Invalid surrogate pair"
+    else return $ chr code
 
 -- | 解析 JSON 字符串中的单个转义字符。
 --
--- 支持的转义序列：\" \\ \n \t
--- 这是挑战 1 的核心实现，展示了 Alternative 的实战用法：
--- 先尝试匹配转义序列，如果输入不是反斜杠开头，则整体失败。
+-- 严格遵循 RFC 8259 的 escape 定义：
+--   \" \\ \/ \b \f \n \r \t \uXXXX
 parseEscapedChar :: Parser Char
 parseEscapedChar = do
   _ <- char '\\'
@@ -175,22 +233,29 @@ parseEscapedChar = do
   case c of
     '"'  -> return '"'
     '\\' -> return '\\'
+    '/'  -> return '/'
+    'b'  -> return '\b'
+    'f'  -> return '\f'
     'n'  -> return '\n'
+    'r'  -> return '\r'
     't'  -> return '\t'
-    _    -> fail $ "Unknown escape sequence: \\ " ++ [c]
+    'u'  -> parseUnicodeEscape
+    _    -> fail $ "Invalid escape sequence: \\ " ++ [c]
 
--- | 解析 JSON String（支持转义字符）。
+-- | 判断字符是否是合法的 JSON 未转义字符。
 --
--- 流程：匹配左引号 -> 读取零个或多个（转义字符 或 普通非引号字符） -> 匹配右引号。
+-- RFC 8259: unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
+-- 即：不允许裸的 control characters (U+0000-U+001F)、引号、反斜杠。
+isUnescaped :: Char -> Bool
+isUnescaped c = ord c >= 0x20 && c /= '"' && c /= '\\'
+
+-- | 解析 JSON String（严格遵循 RFC 8259）。
 --
--- 关键组合：many (parseEscapedChar <|> satisfy (/= '"'))
---   - parseEscapedChar 处理 \", \\, \n, \t
---   - satisfy (/= '"') 处理普通字符
---   - <|> 让解析器在每一步自动选择正确的分支
+-- 流程：匹配左引号 -> 读取零个或多个（转义字符 或 合法未转义字符） -> 匹配右引号。
 parseString :: Parser JsonValue
 parseString = do
   _ <- char '"'
-  s <- many (parseEscapedChar <|> satisfy (/= '"'))
+  s <- many (parseEscapedChar <|> satisfy isUnescaped)
   _ <- char '"'
   return $ JsonString s
 

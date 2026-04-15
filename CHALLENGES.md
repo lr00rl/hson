@@ -56,31 +56,57 @@ parseEscapedChar = do
 
 ---
 
-## 挑战 2：手写数字解析器
+## ✅ 挑战 2：手写数字解析器（已完成）
 
 ### 现状
 当前 `parseNumber` 使用了 Haskell 内置的 `reads`，虽然能用，但**作弊了**。它不是一个真正的 Parser Combinator 作品。
 
 ### 目标
-完全用 Parser Combinator 重写 `parseNumber`，支持：
-- 整数：`42`, `-7`
-- 小数：`3.14`, `-0.5`
-- 科学计数法：`1e10`, `2.5E-3`
-
-### 提示
-把数字拆成几个小解析器组合：
-```haskell
-parseSign    = optional (char '-')    -- 负号可选
-parseDigits  = some digit             -- 一个或多个数字
-parseDot     = optional (...)         -- 小数点及后续数字可选
-parseExp     = optional (...)         -- e/E 及后续指数可选
+完全用 Parser Combinator 重写 `parseNumber`，严格遵循 RFC 8259 的 `number` ABNF：
+```
+number = [ minus ] int [ frac ] [ exp ]
+int    = zero / ( digit1-9 *DIGIT )
+frac   = decimal-point 1*DIGIT
+exp    = e [ minus / plus ] 1*DIGIT
 ```
 
-最后把它们拼接成一个 `String`，再用 `read :: String -> Double` 转成数字。
+支持：
+- 整数：`42`, `-7`, `0`
+- 小数：`3.14`, `-0.5`
+- 科学计数法：`1e10`, `2.5E-3`, `-1.23e+4`
+
+并正确拒绝非法输入：`01`, `1.`, `.5`, `1e`, `1e+`
+
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心改动在 `src/Hson/Parser.hs`：
+```haskell
+parseNumber = do
+  sign     <- optional (char '-')
+  intPart  <- parseInt
+  fracPart <- optional parseFrac
+  expPart  <- optional parseExp
+  let numStr = maybe "" (:[]) sign ++ intPart ++ maybe "" id fracPart ++ maybe "" id expPart
+  return $ JsonNumber (read numStr)
+```
+
+其中 `parseInt` 的关键逻辑：
+```haskell
+parseInt = do
+  first <- satisfy (`elem` "0123456789")
+  if first == '0'
+    then return "0"           -- 禁止前导零：01 非法
+    else do
+      rest <- many (satisfy (`elem` "0123456789"))
+      return (first : rest)
+```
 
 ### 学习目标
 - `optional`、`some`、`many` 的组合使用
 - 如何把多个小解析器组装成复杂解析器
+- ABNF 到 Parser Combinator 的直接映射
+- 用严格的语法验证保证后续 `read` 的安全性
 
 ---
 

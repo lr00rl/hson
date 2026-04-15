@@ -2,6 +2,8 @@ module Main where
 
 import System.Environment (getArgs)
 import Data.List (intercalate)
+import Data.Char (ord)
+import Numeric (showHex)
 import Hson.Parser (runParser, parseJson)
 import Hson.Types (JsonValue(..))
 
@@ -27,12 +29,21 @@ prettyPrint = go 0
     indent d = replicate (d * 2) ' '
 
     escapeString :: String -> String
-    escapeString = concatMap $ \c -> case c of
-      '"'  -> "\\\""
-      '\\' -> "\\\\"
-      '\n' -> "\\n"
-      '\t' -> "\\t"
-      _    -> [c]
+    escapeString = concatMap escapeChar
+      where
+        escapeChar c = case c of
+          '"'  -> "\\\""
+          '\\' -> "\\\\"
+          '\b' -> "\\b"
+          '\f' -> "\\f"
+          '\n' -> "\\n"
+          '\r' -> "\\r"
+          '\t' -> "\\t"
+          _    -> let code = ord c in
+                  if code < 0x20
+                    then "\\u" ++ padHex 4 code
+                    else [c]
+        padHex len n = let h = showHex n "" in replicate (len - length h) '0' ++ h
 
 main :: IO ()
 main = do
