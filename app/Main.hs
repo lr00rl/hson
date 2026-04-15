@@ -1,0 +1,43 @@
+module Main where
+
+import System.Environment (getArgs)
+import Data.List (intercalate)
+import Hson.Parser (runParser, parseJson)
+import Hson.Types (JsonValue(..))
+
+-- | 美化打印 JSON（带缩进）
+prettyPrint :: JsonValue -> String
+prettyPrint = go 0
+  where
+    go _ JsonNull       = "null"
+    go _ (JsonBool b)   = if b then "true" else "false"
+    go _ (JsonNumber n) = show n
+    go _ (JsonString s) = "\"" ++ s ++ "\""
+    go _ (JsonArray []) = "[]"
+    go n (JsonArray xs) =
+      "[\n"
+      ++ intercalate ",\n" (map (\x -> indent (n+1) ++ go (n+1) x) xs)
+      ++ "\n" ++ indent n ++ "]"
+    go _ (JsonObject []) = "{}"
+    go n (JsonObject ps) =
+      "{\n"
+      ++ intercalate ",\n" (map (\(k,v) -> indent (n+1) ++ "\"" ++ k ++ "\": " ++ go (n+1) v) ps)
+      ++ "\n" ++ indent n ++ "}"
+
+    indent d = replicate (d * 2) ' '
+
+main :: IO ()
+main = do
+  args <- getArgs
+  input <- case args of
+    (file:_) -> readFile file
+    []       -> getContents
+
+  case runParser parseJson input of
+    Just (json, rest) -> do
+      putStrLn (prettyPrint json)
+      if all (`elem` " \t\n\r") rest
+        then return ()
+        else putStrLn $ "Warning: unparsed trailing input: " ++ take 50 rest
+    Nothing -> do
+      putStrLn "Error: Failed to parse JSON"

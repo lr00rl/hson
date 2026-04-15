@@ -1,0 +1,11 @@
+{
+  "name": "Haskell",
+  "level": 42,
+  "tags": ["fp", "lazy", "pure"],
+  "active": true,
+  "metadata": {
+    "author": "Learner",
+    "version": 0.1,
+    "features": []
+  }
+}

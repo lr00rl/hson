@@ -1,0 +1,37 @@
+name:                hson
+version:             0.1.0.0
+synopsis:            A JSON parser built from scratch in Haskell
+description:
+  HSON is my learning-haskell project — a zero-dependency JSON parser
+  written entirely in Haskell to explore Parser Combinators, Functor,
+  Applicative, Monad, and recursive descent parsing. It is both a personal
+  learning journal and an open-source tutorial for anyone who wants to
+  understand functional parsing from the ground up.
+homepage:            https://github.com/lr00rl/hson
+license:             MIT
+license-file:        LICENSE
+author:              lr00rl
+maintainer:          lr00rl@example.com
+copyright:           2025 lr00rl
+build-type:          Simple
+cabal-version:       >=1.10
+tested-with:         GHC ==9.4.8
+
+source-repository head
+  type:     git
+  location: https://github.com/lr00rl/hson
+
+library
+  exposed-modules:     Hson.Parser, Hson.Types
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  build-depends:       base >=4.14 && <5
+  ghc-options:         -Wall
+
+executable hson
+  main-is:             Main.hs
+  hs-source-dirs:      app
+  default-language:    Haskell2010
+  build-depends:       base >=4.14 && <5
+                     , hson
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
