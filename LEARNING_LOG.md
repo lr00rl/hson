@@ -333,3 +333,76 @@ sepBy p sep = Parser $ \st -> case runParser p st of
 2. **位置的精确性比信息的完美性更重要**：用户首先关心"哪里错了"，其次才是"为什么错"。
 3. **组合子的语义设计**：`sepBy` 和 `<|>` 的"是否回退"直接影响错误报告的质量。这是工业级解析器（Parsec / Megaparsec）的核心课题。
 4. **ABNF 到代码的映射依然成立**：即使加入了错误和状态追踪，Parser Combinator 的高阶组合模式依然优雅。
+
+---
+
+## 2025-04-16 | 挑战 5：JSON Path 查询 DSL
+
+### 目标
+在解析出的 `JsonValue` 上实现 `.data.users[0].name` 风格的查询语法。
+
+### 设计
+
+#### 1. 路径段的 ADT
+```haskell
+data PathSegment = Key String | Index Int
+  deriving (Eq, Show)
+```
+
+#### 2. 路径解析器 `parsePath`
+没有动用庞大的 Parser Combinator 框架，而是用 Haskell 标准库的 `span` + 递归完成：
+
+```haskell
+parsePath :: String -> Maybe [PathSegment]
+parsePath ('.':cs) =
+  let (key, rest) = span (`notElem` "[.") cs
+  in (Key key :) <$> parsePath rest
+parsePath ('[':cs) =
+  case span isDigit cs of
+    (digits, ']':rest) -> (Index (read digits) :) <$> parsePath rest
+    _ -> Nothing
+```
+
+**第一次踩坑**：最初把 `.` 的分隔符忘了，写了 `span (/= '[')`，导致 `.settings.theme` 被解析成 `Key "settings.theme"` 而不是 `[Key "settings", Key "theme"]`。
+
+修复：把 `.` 也加入分隔符集合：`span (`notElem` "[.")`。
+
+#### 3. 查询函数 `query`
+```haskell
+query :: [PathSegment] -> JsonValue -> Maybe JsonValue
+query [] json = Just json
+query (Key k : rest) (JsonObject pairs) = lookup k pairs >>= query rest
+query (Index i : rest) (JsonArray xs)
+  | i >= 0 && i < length xs = query rest (xs !! i)
+  | otherwise               = Nothing
+query _ _ = Nothing
+```
+
+这里展示了 Haskell 处理递归数据结构的典型模式：
+- 基本情况（base case）：空路径，返回当前值
+- 递归情况：根据 `PathSegment` 类型分支，用 `lookup` 或数组索引找到下一层，然后递归调用 `query`
+- 失败处理：任意一步不匹配（对象没有该 key、数组越界、类型不匹配），立即返回 `Nothing`
+
+#### 4. CLI 集成
+`Main.hs` 的命令行参数扩展为支持 `[file] [path]`：
+```bash
+cabal run hson -- examples/nested.json .users[0].name
+# => "Alice"
+```
+
+### 验证结果
+
+| 查询 | 结果 |
+|------|------|
+| `.users[0].name` | `"Alice"` ✅ |
+| `.users[1].roles[0]` | `"user"` ✅ |
+| `.settings.theme` | `"dark"` ✅ |
+| `.users[0].age` | `Query failed...` ✅ (key 不存在) |
+| `.users[2].name` | `Query failed...` ✅ (数组越界) |
+
+### 学习收获
+
+1. **ADT 不仅用于解析结果，也用于中间表示**：`PathSegment` 就是查询 AST 的节点。
+2. **不是所有解析都需要 Parser Combinator**：对于简单的、无回溯的线性语法，`span` + 递归往往更清晰。
+3. **`Maybe` Monad 的链式失败**：`lookup k pairs >>= query rest` 让错误传播变得零成本，代码专注于"成功路径"。
+4. **CLI 设计要自然**：把查询路径作为第二个命令行参数，符合 Unix 工具的使用直觉。

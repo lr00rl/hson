@@ -165,7 +165,7 @@ sepBy p sep = Parser $ \st -> case runParser p st of
 
 ---
 
-## 挑战 4：JSON Path 查询
+## ✅ 挑战 5：JSON Path 查询（已完成）
 
 ### 目标
 在 `JsonValue` 上实现一个查询函数：
@@ -179,19 +179,42 @@ jsonQuery :: String -> JsonValue -> Maybe JsonValue
 - `[0]` -> 访问数组索引
 - 链式组合：`.data.users[0].name`
 
-### 示例
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心实现位于 `src/Hson/Query.hs`：
+1. **ADT 定义**：`data PathSegment = Key String | Index Int`
+2. **路径解析**：用 `span` + 递归把 `.data.users[0].name` 解析成 `[Key "data", Key "users", Index 0, Key "name"]`
+3. **查询执行**：
+   ```haskell
+   query :: [PathSegment] -> JsonValue -> Maybe JsonValue
+   query (Key k : rest) (JsonObject pairs) = lookup k pairs >>= query rest
+   query (Index i : rest) (JsonArray xs)   = query rest (xs !! i)
+   ```
+4. **CLI 集成**：`Main.hs` 支持 `hson file.json .path[0].query`
+
+### 关键代码
 ```haskell
-let json = JsonObject [("data", JsonArray [JsonObject [("name", JsonString "Alice")]])]
-jsonQuery ".data[0].name" json  -- => Just (JsonString "Alice")
+parsePath :: String -> Maybe [PathSegment]
+parsePath ('.':cs) =
+  let (key, rest) = span (`notElem` "[.") cs
+  in (Key key :) <$> parsePath rest
+parsePath ('[':cs) =
+  case span isDigit cs of
+    (digits, ']':rest) -> (Index (read digits) :) <$> parsePath rest
+    _ -> Nothing
 ```
 
-### 提示
-- 先实现一个小型路径解析器，把 `".data[0].name"` 解析成 `[Key "data", Index 0, Key "name"]`
-- 然后对 `JsonValue` 做 fold
+### 验证示例
+```bash
+cabal run hson -- examples/nested.json .users[0].name
+# => "Alice"
+```
 
 ### 学习目标
-- 递归数据结构上的遍历（fold）
+- 递归数据结构上的遍历
 - 小型领域特定语言（DSL）的构建
+- `Maybe` Monad 的链式失败传播
 
 ---
 
