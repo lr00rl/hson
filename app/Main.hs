@@ -24,7 +24,7 @@ import qualified Data.Text as T
 import Hson.Parser (parse, parseJson, ParseError(..))
 import Hson.Query (queryString)
 import Hson.ToJson (encode, encodeCompact, encodeColor, encodeCompactColor)
-import Control.Monad (when)
+import Control.Monad (unless)
 import Hson.Types (JsonValue(..))
 
 -- | 判断一个字符串是否是 JSON Path（以 . 或 [ 开头）。
@@ -201,7 +201,7 @@ process :: Bool -> (JsonValue -> String) -> Maybe String -> String -> IO ()
 process raw enc mPath input = do
   case parse parseJson (T.pack input) of
     Right (json, rest) -> do
-      when (not (T.all (\c -> c `elem` (" \t\n\r" :: String)) rest)) $
+      unless (T.all (\c -> c `elem` (" \t\n\r" :: String)) rest) $
         putStrLn $ "Warning: unparsed trailing input: " ++ T.unpack (T.take 50 rest)
       case mPath of
         Just path ->
