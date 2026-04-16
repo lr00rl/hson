@@ -824,3 +824,89 @@ toJson user |> fromJson :: Either String User
 - **错误报告**：精确行号列号
 
 除了没有 `Vector` / `HashMap` / `Scientific` 等工业级数据结构外，核心能力已经非常接近 `aeson` 的简化教学版了。
+
+---
+
+## 2025-04-16 | 补全测试套件：从 0 到 45 个自动化用例
+
+### 目标
+为项目添加完整的 Hspec 测试套件，覆盖核心功能，并修复测试中暴露的解析器 bug。
+
+### 测试设计
+
+在 `test/Spec.hs` 中编写了 45 个测试用例，分为 5 个模块：
+
+1. **Hson.Parser（18 个用例）**
+   - 基础类型：null、bool、number、string
+   - 转义字符： `"\n"`、unicode escape、surrogate pair
+   - 复合类型：empty array、nested array、empty object、nested object
+   - 错误输入：leading zeros、trailing dot、bare control chars
+   - 空白处理
+
+2. **Hson.Query（6 个用例）**
+   - 对象字段查询 `.settings.theme`
+   - 数组索引查询 `.users[0].name`
+   - 缺失 key、越界索引、非法路径
+
+3. **Hson.Class / FromJson（9 个用例）**
+   - 基础类型反序列化：Bool、Int、Text、[Int]、Maybe
+   - 类型不匹配错误报告
+   - Generics 自动推导：嵌套 record、缺失 Maybe 字段
+
+4. **Hson.ToJson（9 个用例）**
+   - 基础类型序列化
+   - `object` / `.=` 手动构造
+   - Generics 自动序列化
+   - `encode` 输出验证
+
+5. **Round-trip（3 个用例）**
+   - `JsonValue` 的 parse → encode → parse 一致性
+   - Generic record 的 toJson → fromJson 一致性
+   - 缺失 Maybe 字段的 round-trip 一致性
+
+### 测试中暴露的 Bug：trailing dot 未被拒绝
+
+测试用例 `rejects trailing dot in number` 最初失败了。
+
+**原因**：`parseNumber` 中对 `fracPart` 使用了 `optional parseFrac`：
+```haskell
+parseFrac = do
+  _      <- char '.'
+  digits <- some (satisfy (charIn "0123456789"))
+  ...
+```
+
+当输入为 `1.` 时，`char '.'` 成功消费了 `.`，但后续的 `some digitChar` 失败。`optional` 捕获了这个失败并**回退**到 `.` 之前的状态，导致 `1.` 被当成合法的 `1` 解析。
+
+**修复**：引入 `parseOptionalFrac`，实现"承诺解析"（committed parsing）：
+```haskell
+parseOptionalFrac = Parser $ \st ->
+  case T.uncons (sInput st) of
+    Just ('.', _) ->
+      case runParser parseFrac st of
+        Right (txt, st') -> Right (Just txt, st')
+        Left err         -> Left err
+    _ -> Right (Nothing, st)
+```
+
+逻辑：如果输入下一个字符是 `.`，则运行 `parseFrac`，无论成败都不回退；如果不是 `.`，则直接返回 `Nothing`。
+
+### 验证结果
+
+```bash
+cabal test
+```
+
+输出：
+```
+Finished in 0.0032 seconds
+45 examples, 0 failures
+```
+
+全部通过 ✅
+
+### 学习收获
+
+1. **测试是最好的设计工具**：在写测试的过程中，我们发现了 trailing dot 这个隐藏 bug，这是手动运行示例无法覆盖的。
+2. **承诺解析的重要性**：`optional` 的默认语义是"原子性失败"，但在解析器已经消费了输入后，回退会掩盖语法错误。这在工业级解析器中是经典陷阱。
+3. **Hspec 的简洁性**：45 个测试用例写在一个文件里，结构清晰，运行迅速。对于教学项目来说，测试代码本身就是文档。

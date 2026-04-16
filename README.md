@@ -20,11 +20,17 @@ If you are learning Haskell and wondering *"How do Functor, Applicative, and Mon
 # Build
 cabal build
 
+# Run the test suite (45+ examples covering parser, query, serialization, generics)
+cabal test
+
 # Parse JSON from stdin
 echo '{"name": "Haskell", "level": 42}' | cabal run hson
 
 # Parse a JSON file
 cabal run hson -- examples/nested.json
+
+# JSON Path query
+cabal run hson -- examples/nested.json .users[0].name
 ```
 
 ---

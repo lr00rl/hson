@@ -48,3 +48,14 @@ executable hson-megaparsec
                      , megaparsec >=9.0 && <10
                      , hson
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+
+test-suite hson-test
+  type:                exitcode-stdio-1.0
+  main-is:             Spec.hs
+  hs-source-dirs:      test
+  default-language:    Haskell2010
+  build-depends:       base >=4.14 && <5
+                     , text >=1.2 && <3
+                     , hson
+                     , hspec >=2.7 && <3
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N

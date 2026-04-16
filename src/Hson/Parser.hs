@@ -185,7 +185,7 @@ parseNumber :: Parser JsonValue
 parseNumber = do
   sign     <- optional (char '-')
   intPart  <- parseInt
-  fracPart <- optional parseFrac
+  fracPart <- parseOptionalFrac
   expPart  <- optional parseExp
   let numTxt = maybe T.empty (T.singleton) sign <> intPart <> maybe T.empty id fracPart <> maybe T.empty id expPart
   case TR.double numTxt of
@@ -205,10 +205,18 @@ parseNumber = do
           rest <- many (satisfy (charIn "0123456789"))
           return (T.pack (first : rest))
 
-    parseFrac = do
-      _      <- char '.'
-      digits <- some (satisfy (charIn "0123456789"))
-      return (T.cons '.' (T.pack digits))
+    parseOptionalFrac = Parser $ \st ->
+      case T.uncons (sInput st) of
+        Just ('.', _) ->
+          case runParser parseFrac st of
+            Right (txt, st') -> Right (Just txt, st')
+            Left err         -> Left err
+        _ -> Right (Nothing, st)
+      where
+        parseFrac = do
+          _      <- char '.'
+          digits <- some (satisfy (charIn "0123456789"))
+          return (T.cons '.' (T.pack digits))
 
     parseExp = do
       e      <- satisfy (charIn "eE")
