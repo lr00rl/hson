@@ -259,11 +259,56 @@ fromJson jsonValue :: Either String User
 - 类型同义词（`String = [Char]`）在实例推导中的特殊处理
 - 从零理解 `aeson` 的核心骨架
 
-### 进阶目标（地狱难度，留待未来）
+### 进阶目标（地狱难度，已完成）
 研究 `GHC.Generics`，让 `User` 类型可以自动派生 `FromJson`：
 ```haskell
 data User = User { ... } deriving (Generic, FromJson)
 ```
+
+实现细节：
+- `GFromJson` 类型类处理 `U1`、`K1`、`M1`、`(:*:)`, `(:+:)` 等通用表示
+- `M1 S` 实例通过 `selName` 提取 record 字段名，从 `JsonObject` 中按名查找
+- 缺失字段时传入 `JsonNull`，让 `Maybe` 自动返回 `Nothing`
+- `FromJson` 类型类通过 `default fromJson` 自动桥接 `Generic`
+
+---
+
+## ✅ 挑战 8：ToJson 类型类 + GHC.Generics 自动序列化（已完成）
+
+### 目标
+实现 `ToJson` 类型类，让 Haskell 类型能自动序列化为 `JsonValue`，并同时支持 GHC.Generics 自动推导：
+```haskell
+data User = User { name :: Text, age :: Int }
+  deriving (Generic, FromJson, ToJson)
+```
+
+### 实现总结
+参见 [`LEARNING_LOG.md`](./LEARNING_LOG.md) 的详细笔记。
+
+核心实现位于 `src/Hson/ToJson.hs`：
+1. **类型类定义**：`class ToJson a where toJson :: a -> JsonValue`
+2. **基础实例**：`Bool`、`Int`、`Double`、`Text`、`String`、`Char`、`[a]`、`Maybe a`
+3. **辅助 API**：`object`、`(.=)` 用于手动构造 JSON
+4. **Generic 推导**：`GToJson` 类型类，与 `GFromJson` 对称
+5. **序列化输出**：`encode :: JsonValue -> String` 输出带缩进 JSON
+
+### 关键设计
+`GToJson (a :*: b)` 实例把左右两边的 `JsonObject` 字段列表合并：
+```haskell
+instance (GToJson a, GToJson b) => GToJson (a :*: b) where
+  gToJson (a :*: b) = merge (gToJson a) (gToJson b)
+```
+
+### 验证示例
+```haskell
+let user = User "Alice" 30 True (Just (Address "Shanghai" "200000"))
+encode (toJson user)
+```
+
+### 学习目标
+- 类型类的双向设计（FromJson ↔ ToJson）
+- Generics 的序列化路径
+- Round-trip 安全性：解析 → 打印 → 再解析，数据保持一致
 
 ---
 

@@ -694,3 +694,133 @@ runMega p input = runParser p' "<input>" input
 | 🐉 最终挑战：Megaparsec 重写 | ✅ |
 
 **全部完成！** 🎉
+
+---
+
+## 2025-04-16 | 挑战 8：ToJson 类型类 + GHC.Generics 自动序列化
+
+### 目标
+为项目添加 `ToJson` 类型类，实现 `FromJson` 的对称能力——把 Haskell 类型自动序列化为 `JsonValue`。
+同时，给 `ToJson` 也加上 GHC.Generics 自动推导支持，让用户能写：
+
+```haskell
+data User = User { name :: Text, age :: Int }
+  deriving (Generic, FromJson, ToJson)
+```
+
+### 设计
+
+#### 1. ToJson 类型类定义
+```haskell
+class ToJson a where
+  toJson :: a -> JsonValue
+
+  default toJson :: (Generic a, GToJson (Rep a)) => a -> JsonValue
+  toJson x = gToJson (from x)
+```
+
+基础实例覆盖了 `Bool`、`Int`、`Double`、`Text`、`String`、`Char`、`[a]`、`Maybe a`。
+
+#### 2. 辅助 API
+```haskell
+type Pair = (Text, JsonValue)
+object :: [Pair] -> JsonValue
+(.=) :: ToJson a => Text -> a -> Pair
+```
+
+示例：
+```haskell
+let json = object
+      [ "name" .= ("Bob" :: Text)
+      , "age" .= (25 :: Int)
+      ]
+```
+
+#### 3. GToJson 的 Generic 实现
+与 `GFromJson` 对称但更简单：
+
+```haskell
+class GToJson f where
+  gToJson :: f p -> JsonValue
+```
+
+- `K1`：直接调用 `toJson`
+- `M1 S`：如果字段有名字，包装成 `JsonObject [(name, value)]`；无名字则透传
+- `(:*:)`: 合并左右两边的 `JsonObject`，把字段列表拼起来
+- `M1 D / M1 C`：透传
+
+这样对于 `User { name = "Alice", age = 30 }`：
+- `M1 S name` → `JsonObject [("name", JsonString "Alice")]`
+- `M1 S age` → `JsonObject [("age", JsonNumber 30)]`
+- `(:*:)` 合并 → `JsonObject [("name", ...), ("age", ...)]`
+
+#### 4. 序列化函数 `encode`
+`Hson.ToJson` 还提供了 `encode :: JsonValue -> String`，输出带缩进的 JSON 字符串。
+`app/Main.hs` 和 `app/MegaMain.hs` 都更新为导入 `Hson.ToJson.encode`，不再保留本地的 `prettyPrint`。
+
+### 踩坑
+
+#### 坑 1：GToJson 的 `(:*:)` 合并逻辑
+如果左边或右边不是 `JsonObject`（比如无名字段的构造子），直接合并会失败。我们加了保护：
+```haskell
+merge (JsonObject xs) (JsonObject ys) = JsonObject (xs ++ ys)
+merge JsonNull y = y
+merge x JsonNull = x
+merge _ _ = JsonNull
+```
+
+#### 坑 2：FromJson 的 `Maybe` 字段缺失行为
+在测试 round-trip 时发现：Generics 推导的 `fromJson` 在字段不存在时直接报错 "Missing field"。但 `Maybe` 字段应该是可选的。
+
+**修复**：在 `GFromJson (M1 S s f)` 实例中，字段不存在时不再报错，而是传入 `JsonNull`：
+```haskell
+Nothing -> M1 <$> gFromJson JsonNull
+```
+这样 `Maybe a` 的 `fromJson` 会正确返回 `Nothing`，而 `Int` 等必填字段仍会报错。
+
+### 验证结果
+
+**ToJson + Generic 推导：**
+```haskell
+let user = User "Alice" 30 True (Just (Address "Shanghai" "200000"))
+encode (toJson user)
+```
+输出：
+```json
+{
+  "name": "Alice",
+  "age": 30.0,
+  "active": true,
+  "address": {
+    "city": "Shanghai",
+    "zipCode": "200000"
+  }
+}
+```
+
+**Round-trip 测试：**
+```haskell
+toJson user |> fromJson :: Either String User
+-- Right (User {name = "Alice", age = 30, active = True, address = Just (Address {city = "Shanghai", zipCode = "200000"})})
+```
+
+完美对称 ✅
+
+### 学习收获
+
+1. **类型类的双向性**：`FromJson` 和 `ToJson` 共同构成了 Haskell 中与 JSON 的"同构映射"。这是 `aeson` 的核心骨架。
+2. **Generics 的威力翻倍**：一次 `deriving (Generic, FromJson, ToJson)`，就同时获得了反序列化和序列化能力，编译器在幕后生成了所有样板代码。
+3. **Optional 字段的语义设计**："字段不存在 = null" 是 JSON 生态中处理可选字段的常见约定，我们的 Generics 实现成功模拟了这一点。
+4. **API 的一致性**：`object` / `.=` 的组合让手动构造 JSON 变得非常自然，与 `aeson` 的 `object` / `.=` 几乎一致。
+
+### 项目能力总结
+
+现在我们的 `hson` 项目已经具备了：
+- **解析**：手写 Parser Combinator + Megaparsec 双实现
+- **序列化**：`ToJson` 类型类 + `encode`
+- **查询**：JSON Path DSL
+- **泛型**：`deriving (Generic, FromJson, ToJson)` 自动推导
+- **性能**：`Data.Text` 核心
+- **错误报告**：精确行号列号
+
+除了没有 `Vector` / `HashMap` / `Scientific` 等工业级数据结构外，核心能力已经非常接近 `aeson` 的简化教学版了。
