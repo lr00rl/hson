@@ -9,6 +9,7 @@ import Text.Megaparsec (errorBundlePretty)
 import Hson.MegaParser (runMega, parseJson)
 import Hson.Query (queryString)
 import Hson.ToJson (encode, encodeCompact, encodeColor, encodeCompactColor)
+import Control.Monad (when)
 import Hson.Types (JsonValue(..))
 
 isPath :: String -> Bool
@@ -52,9 +53,8 @@ process :: Bool -> (JsonValue -> String) -> Maybe String -> T.Text -> IO ()
 process raw enc mPath input = do
   case runMega parseJson input of
     Right (json, rest) -> do
-      if not (T.all (\c -> c `elem` (" \t\n\r" :: String)) rest)
-        then putStrLn $ "Warning: unparsed trailing input: " ++ T.unpack (T.take 50 rest)
-        else return ()
+      when (not (T.all (\c -> c `elem` (" \t\n\r" :: String)) rest)) $
+        putStrLn $ "Warning: unparsed trailing input: " ++ T.unpack (T.take 50 rest)
       case mPath of
         Just path ->
           case queryString (T.pack path) json of
