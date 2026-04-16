@@ -1,0 +1,4 @@
+packages: .
+
+package hson
+  ghc-options: -fwrite-ide-info

@@ -26,11 +26,17 @@ cabal test
 # Parse JSON from stdin
 echo '{"name": "Haskell", "level": 42}' | cabal run hson
 
+# Query stdin with JSON Path (jq-like!)
+echo '{"users":[{"name":"Alice"}]}' | cabal run hson -- .users[0].name
+
 # Parse a JSON file
 cabal run hson -- examples/nested.json
 
-# JSON Path query
+# JSON Path query from file
 cabal run hson -- examples/nested.json .users[0].name
+
+# Pipe file + query (also works!)
+cat examples/nested.json | cabal run hson -- .users[0].name
 ```
 
 > **New to Haskell?** `cabal` is the build tool and package manager for Haskell — think of it as `npm` + `make` combined. The `hson.cabal` file is the project blueprint: it declares the package name, version, dependencies, source directories, and how to build the library / executables / tests. See [`LEARNING_LOG.md`](./LEARNING_LOG.md) for a detailed beginner-friendly explanation.

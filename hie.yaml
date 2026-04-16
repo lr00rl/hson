@@ -1,0 +1,10 @@
+cradle:
+  cabal:
+    - path: "src"
+      component: "lib:hson"
+    - path: "app/Main.hs"
+      component: "exe:hson"
+    - path: "app/MegaMain.hs"
+      component: "exe:hson-megaparsec"
+    - path: "test"
+      component: "test:hson-test"
