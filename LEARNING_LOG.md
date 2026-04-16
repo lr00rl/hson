@@ -910,3 +910,69 @@ Finished in 0.0032 seconds
 1. **测试是最好的设计工具**：在写测试的过程中，我们发现了 trailing dot 这个隐藏 bug，这是手动运行示例无法覆盖的。
 2. **承诺解析的重要性**：`optional` 的默认语义是"原子性失败"，但在解析器已经消费了输入后，回退会掩盖语法错误。这在工业级解析器中是经典陷阱。
 3. **Hspec 的简洁性**：45 个测试用例写在一个文件里，结构清晰，运行迅速。对于教学项目来说，测试代码本身就是文档。
+
+---
+
+## 2025-04-16 | 工具链基础：`cabal` 与 `hson.cabal` 是什么
+
+### 问题
+作为一个 Haskell 初学者，第一次看到 `cabal build`、`cabal test`、`hson.cabal` 时，完全不知道这套工具在做什么。它和 `make` 有什么区别？和 `package.json` 有什么关系？
+
+### 一句话解释
+
+> **`cabal` 是 Haskell 世界的包工头，`hson.cabal` 是它看的设计图纸。**
+> 你负责写 Haskell 代码，它负责：找人（下载依赖）、搬砖（编译源码）、验收（跑测试）。
+
+### 类比映射
+
+| 你熟悉的工具 | 对应 Haskell 工具 | 作用 |
+|-------------|-------------------|------|
+| `npm` / `yarn` | `cabal` | 下载包、管理依赖版本 |
+| `package.json` | `hson.cabal` | 项目元数据 + 依赖列表 |
+| `Makefile` | `cabal build` / `cabal test` / `cabal run` | 编排编译和运行流程 |
+| `CMakeLists.txt` | `hson.cabal` 里的 `hs-source-dirs`、`ghc-options` | 告诉编译器源代码在哪、怎么编译 |
+
+### `hson.cabal` 核心字段解读
+
+```cabal
+name:                hson               -- 项目名字（类似 package.json 的 name）
+version:             0.1.0.0            -- 版本号
+build-depends:       base >=4.14 && <5  -- 依赖列表（类似 dependencies）
+                     , text >=1.2 && <3
+                     , megaparsec >=9.0 && <10
+
+library
+  exposed-modules:   Hson.Parser, ...   -- 对外暴露的模块（类似 exports）
+  hs-source-dirs:    src                -- 源码目录
+  ghc-options:       -Wall              -- 编译器参数（如开启所有警告）
+
+executable hson
+  main-is:           Main.hs            -- 可执行文件入口
+  build-depends:     base, text, hson   -- 这个 exe 额外需要的依赖
+
+test-suite hson-test
+  type:              exitcode-stdio-1.0 -- 标准测试套件
+  main-is:           Spec.hs            -- 测试入口文件
+  build-depends:     base, text, hson, hspec
+```
+
+### 最常用的 cabal 命令
+
+```bash
+cabal build          # 编译库 + 可执行文件 + 测试
+cabal test           # 编译并运行测试套件
+cabal run hson       # 编译并运行名为 hson 的可执行文件
+cabal repl           # 进入交互式环境（类似 ghci，但自动加载项目模块）
+cabal update         # 更新 Hackage 包列表（类似 apt update / npm update）
+```
+
+### 一个关键认知
+`cabal` 不是 Haskell 的编译器，**GHC 才是编译器**。`cabal` 是 GHC 的"调度器"：
+- 它根据 `hson.cabal` 的图纸，决定哪些文件先编译、哪些后编译
+- 它处理模块之间的依赖图（比如 `Hson.Parser` 依赖 `Hson.Types`，`cabal` 会保证先编译 `Types`）
+- 它从 Hackage 下载缺失的第三方库，并自动解决版本冲突
+
+### 学习收获
+1. **`hson.cabal` 是项目的唯一真实来源（single source of truth）**：名字、版本、依赖、模块列表、编译选项，全部都在这里。
+2. **`cabal` 的本质是"包管理器 + 构建系统"**：它比 `make` 更智能（内置了 Haskell 编译规则），比 `npm` 更低层（直接调度编译器）。
+3. **初学者不需要精通 cabal 的所有高级特性**：先记住 `build`、`test`、`run`、`repl` 四个命令，足以应付 90% 的日常开发。
