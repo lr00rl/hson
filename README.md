@@ -20,7 +20,7 @@ If you are learning Haskell and wondering *"How do Functor, Applicative, and Mon
 # Build
 cabal build
 
-# Run the test suite (49+ examples covering parser, query, serialization, generics)
+# Run the test suite (52 examples covering parser, query, serialization, generics)
 cabal test
 
 # Parse JSON from stdin
@@ -45,8 +45,17 @@ echo '{"a":1,"b":[1,2]}' | cabal run hson -- -c
 echo '{"name":"Alice"}' | cabal run hson -- -r .name
 # => Alice
 
-# Color highlighting
+# Color highlighting (auto-enabled on TTY, disabled in pipes)
 echo '{"a":1}' | cabal run hson -- --color
+
+# Force disable colors
+ echo '{"a":1}' | cabal run hson -- --no-color
+
+# Array wildcard traversal (jq-like)
+echo '{"users":[{"name":"Alice"},{"name":"Bob"}]}' | cabal run hson -- .users[].name
+# => ["Alice", "Bob"]
+
+# hson-megaparsec has full parity with all CLI flags above
 ```
 
 > **New to Haskell?** `cabal` is the build tool and package manager for Haskell — think of it as `npm` + `make` combined. The `hson.cabal` file is the project blueprint: it declares the package name, version, dependencies, source directories, and how to build the library / executables / tests. See [`LEARNING_LOG.md`](./LEARNING_LOG.md) for a detailed beginner-friendly explanation.
@@ -68,9 +77,13 @@ echo '{"a":1}' | cabal run hson -- --color
 │   ├── sample.json        # Basic nested example
 │   └── nested.json        # Array-of-objects example
 └── src/
-    └── Json/
-        ├── Types.hs       # JSON ADT (Algebraic Data Type)
-        └── Parser.hs      # Hand-written Parser Combinator framework
+    └── Hson/
+        ├── Types.hs       # JSON ADT
+        ├── Parser.hs      # Hand-written Parser Combinator framework
+        ├── Query.hs       # JSON Path DSL
+        ├── Class.hs       # FromJson + GHC.Generics
+        ├── ToJson.hs      # ToJson + encoders
+        └── MegaParser.hs  # Megaparsec implementation
 ```
 
 ---

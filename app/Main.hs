@@ -1,6 +1,8 @@
 module Main where
 
 import System.Environment (getArgs)
+import System.IO (stdout)
+import System.Console.ANSI (hSupportsANSI)
 import qualified Data.Text as T
 import Hson.Parser (parse, parseJson, ParseError(..))
 import Hson.Query (queryString)
@@ -17,25 +19,35 @@ isFlag :: String -> Bool
 isFlag ('-':_) = True
 isFlag _       = False
 
--- | 解析 flag：返回 (是否 compact, 是否 raw-output, 是否 color, 剩余非 flag 参数)
-parseFlags :: [String] -> (Bool, Bool, Bool, [String])
-parseFlags = go False False False []
+-- | 解析 flag：返回 (是否 compact, 是否 raw-output, 是否显式 color, 是否显式 no-color, 剩余非 flag 参数)
+parseFlags :: [String] -> (Bool, Bool, Bool, Bool, [String])
+parseFlags = go False False False False []
   where
-    go c r color rest [] = (c, r, color, reverse rest)
-    go c r color rest (arg:args)
-      | arg == "-c"        || arg == "--compact"    = go True r color rest args
-      | arg == "-r"        || arg == "--raw-output" = go c True color rest args
-      | arg == "--color"                            = go c r True rest args
-      | isFlag arg                                  = go c r color rest args  -- 忽略未知 flag
-      | otherwise                                   = go c r color (arg:rest) args
+    go c r color noColor rest [] = (c, r, color, noColor, reverse rest)
+    go c r color noColor rest (arg:args)
+      | arg == "-c"        || arg == "--compact"    = go True r color noColor rest args
+      | arg == "-r"        || arg == "--raw-output" = go c True color noColor rest args
+      | arg == "--color"                            = go c r True noColor rest args
+      | arg == "--no-color"                         = go c r color True rest args
+      | isFlag arg                                  = go c r color noColor rest args
+      | otherwise                                   = go c r color noColor (arg:rest) args
 
--- | 选择编码器。
-selectEncoder :: Bool -> Bool -> (JsonValue -> String)
-selectEncoder compact color
-  | compact && color = encodeCompactColor
-  | compact          = encodeCompact
-  | color            = encodeColor
-  | otherwise        = encode
+-- | 选择编码器。颜色规则：
+--   - 显式 --color    => 开
+--   - 显式 --no-color => 关
+--   - 否则检测 stdout 是否是 TTY => 自动开关
+selectEncoder :: Bool -> Bool -> Bool -> IO (JsonValue -> String)
+selectEncoder compact explicitColor explicitNoColor = do
+  useColor <- if explicitNoColor
+                then return False
+                else if explicitColor
+                  then return True
+                  else hSupportsANSI stdout
+  return $ case (compact, useColor) of
+    (True,  True)  -> encodeCompactColor
+    (True,  False) -> encodeCompact
+    (False, True)  -> encodeColor
+    (False, False) -> encode
 
 -- | 输出 JSON 值，支持 raw-output 模式。
 outputJson :: Bool -> (JsonValue -> String) -> JsonValue -> IO ()
@@ -63,8 +75,8 @@ process raw enc mPath input = do
 main :: IO ()
 main = do
   allArgs <- getArgs
-  let (compact, raw, color, args) = parseFlags allArgs
-  let enc = selectEncoder compact color
+  let (compact, raw, explicitColor, explicitNoColor, args) = parseFlags allArgs
+  enc <- selectEncoder compact explicitColor explicitNoColor
 
   case args of
     -- 文件 + path
@@ -98,7 +110,10 @@ main = do
       putStrLn "Options:"
       putStrLn "  -c, --compact      # Compact output (no indentation)"
       putStrLn "  -r, --raw-output   # Raw string output (no quotes)"
-      putStrLn "  --color            # Enable ANSI color highlighting"
+      putStrLn "  --color            # Force ANSI color highlighting"
+      putStrLn "  --no-color         # Disable ANSI color highlighting"
+      putStrLn ""
+      putStrLn "Color default: enabled on TTY, disabled when piped."
       putStrLn ""
       putStrLn "Examples:"
       putStrLn "  echo '{\"a\":1}' | hson"

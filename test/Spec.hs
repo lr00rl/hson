@@ -127,6 +127,7 @@ queryTests = describe "Hson.Query" $ do
             , JsonObject [("name", JsonString "Bob"),   ("age", JsonNumber 25.0)]
             ])
         , ("settings", JsonObject [("theme", JsonString "dark")])
+        , ("tags", JsonArray [JsonString "a", JsonString "b", JsonString "c"])
         ]
 
   it "queries object field" $ do
@@ -146,6 +147,15 @@ queryTests = describe "Hson.Query" $ do
 
   it "returns Nothing for invalid path" $ do
     queryString ".users[abc]" json `shouldBe` Nothing
+
+  it "queries all array elements" $ do
+    queryString ".users[].name" json `shouldBe` Just (JsonArray [JsonString "Alice", JsonString "Bob"])
+
+  it "queries array via empty brackets" $ do
+    queryString ".tags[]" json `shouldBe` Just (JsonArray [JsonString "a", JsonString "b", JsonString "c"])
+
+  it "returns Nothing for all on non-array" $ do
+    queryString ".settings[]" json `shouldBe` Nothing
 
 -- ========================================================================
 -- FromJson 测试

@@ -28,6 +28,7 @@ library
   build-depends:       base >=4.14 && <5
                      , text >=1.2 && <3
                      , megaparsec >=9.0 && <10
+                     , ansi-terminal >=0.11 && <1.2
   ghc-options:         -Wall
 
 executable hson
@@ -36,6 +37,7 @@ executable hson
   default-language:    Haskell2010
   build-depends:       base >=4.14 && <5
                      , text >=1.2 && <3
+                     , ansi-terminal >=0.11 && <1.2
                      , hson
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
 
@@ -46,6 +48,7 @@ executable hson-megaparsec
   build-depends:       base >=4.14 && <5
                      , text >=1.2 && <3
                      , megaparsec >=9.0 && <10
+                     , ansi-terminal >=0.11 && <1.2
                      , hson
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
 
@@ -56,6 +59,7 @@ test-suite hson-test
   default-language:    Haskell2010
   build-depends:       base >=4.14 && <5
                      , text >=1.2 && <3
+                     , ansi-terminal >=0.11 && <1.2
                      , hson
                      , hspec >=2.7 && <3
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
