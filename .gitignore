@@ -31,3 +31,6 @@ stack.yaml.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# nvim lsp
+tags
