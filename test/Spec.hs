@@ -12,7 +12,7 @@ import Hson.Parser (parse, parseJson, ParseError(..))
 import Hson.Types (JsonValue(..))
 import Hson.Query (queryString)
 import Hson.Class (FromJson(..))
-import Hson.ToJson (ToJson(..), encode, object, (.=))
+import Hson.ToJson (ToJson(..), encode, encodeCompact, encodeColor, encodeCompactColor, object, (.=))
 import GHC.Generics (Generic)
 
 -- ========================================================================
@@ -243,6 +243,20 @@ toJsonTests = describe "Hson.ToJson" $ do
     encode (JsonObject [("x", JsonNumber 1.0)])
       `shouldContain` "\"x\":"
 
+  it "encodeCompact produces compact JSON" $ do
+    encodeCompact (JsonObject [("x", JsonNumber 1.0), ("y", JsonArray [JsonBool True, JsonString "a"])])
+      `shouldBe` "{\"x\":1.0,\"y\":[true,\"a\"]}"
+
+  it "encodeColor contains ANSI escape codes" $ do
+    let colored = encodeColor (JsonObject [("name", JsonString "Alice")])
+    colored `shouldContain` "\x1b["
+    colored `shouldContain` "Alice"
+
+  it "encodeCompactColor contains ANSI codes without newlines" $ do
+    let colored = encodeCompactColor (JsonArray [JsonNumber 1.0, JsonString "hello"])
+    colored `shouldContain` "\x1b["
+    colored `shouldNotContain` "\n"
+
 -- ========================================================================
 -- Round-trip 测试
 -- ========================================================================
@@ -269,3 +283,12 @@ roundTripTests = describe "Round-trip" $ do
   it "round-trips a generic record with missing Maybe field" $ do
     let user = User "Bob" 25 False Nothing
     fromJson (toJson user) `shouldBe` Right user
+
+  it "round-trips through compact encode and parse" $ do
+    let original = JsonObject [("a", JsonArray [JsonNumber 1.0, JsonString "x"])]
+    let text = T.pack (encodeCompact original)
+    case parse parseJson text of
+      Right (parsed, rest) -> do
+        T.all (\c -> c `elem` (" \t\n\r" :: String)) rest `shouldBe` True
+        parsed `shouldBe` original
+      Left err -> expectationFailure $ "Parse failed: " ++ show err

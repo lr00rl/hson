@@ -20,7 +20,7 @@ If you are learning Haskell and wondering *"How do Functor, Applicative, and Mon
 # Build
 cabal build
 
-# Run the test suite (45+ examples covering parser, query, serialization, generics)
+# Run the test suite (49+ examples covering parser, query, serialization, generics)
 cabal test
 
 # Parse JSON from stdin
@@ -37,6 +37,16 @@ cabal run hson -- examples/nested.json .users[0].name
 
 # Pipe file + query (also works!)
 cat examples/nested.json | cabal run hson -- .users[0].name
+
+# Compact output (like jq -c)
+echo '{"a":1,"b":[1,2]}' | cabal run hson -- -c
+
+# Raw string output (like jq -r)
+echo '{"name":"Alice"}' | cabal run hson -- -r .name
+# => Alice
+
+# Color highlighting
+echo '{"a":1}' | cabal run hson -- --color
 ```
 
 > **New to Haskell?** `cabal` is the build tool and package manager for Haskell — think of it as `npm` + `make` combined. The `hson.cabal` file is the project blueprint: it declares the package name, version, dependencies, source directories, and how to build the library / executables / tests. See [`LEARNING_LOG.md`](./LEARNING_LOG.md) for a detailed beginner-friendly explanation.

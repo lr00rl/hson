@@ -976,3 +976,89 @@ cabal update         # 更新 Hackage 包列表（类似 apt update / npm update
 1. **`hson.cabal` 是项目的唯一真实来源（single source of truth）**：名字、版本、依赖、模块列表、编译选项，全部都在这里。
 2. **`cabal` 的本质是"包管理器 + 构建系统"**：它比 `make` 更智能（内置了 Haskell 编译规则），比 `npm` 更低层（直接调度编译器）。
 3. **初学者不需要精通 cabal 的所有高级特性**：先记住 `build`、`test`、`run`、`repl` 四个命令，足以应付 90% 的日常开发。
+
+---
+
+## 2025-04-16 | CLI 增强：让 hson 更像 jq
+
+### 目标
+给 `hson` 命令行工具添加三个实用功能，让它在终端使用时更像 `jq`：
+1. **紧凑输出** `-c` / `--compact`
+2. **原始字符串输出** `-r` / `--raw-output`
+3. **ANSI 颜色高亮** `--color`
+
+### 实现
+
+#### 1. `Hson.ToJson` 新增序列化函数
+
+在 `src/Hson/ToJson.hs` 中扩展了序列化家族：
+
+```haskell
+encode              :: JsonValue -> String   -- 带缩进（原有）
+encodeCompact       :: JsonValue -> String   -- 无缩进、无换行
+encodeColor         :: JsonValue -> String   -- 带缩进 + ANSI 颜色
+encodeCompactColor  :: JsonValue -> String   -- 紧凑 + ANSI 颜色
+```
+
+**ANSI 颜色方案（ColorScheme）**：
+- `key`：黄色 `\x1b[33m`
+- `string`：绿色 `\x1b[32m`
+- `number`：洋红 `\x1b[35m`
+- `bool/null`：蓝色 `\x1b[34m`
+
+#### 2. `app/Main.hs` 的手动参数解析
+
+为了不引入重量级依赖（如 `optparse-applicative`），我们用手动模式匹配实现了轻量级 flag 解析：
+
+```haskell
+parseFlags :: [String] -> (Bool, Bool, Bool, [String])
+-- 返回 (是否 compact, 是否 raw, 是否 color, 剩余非 flag 参数)
+```
+
+逻辑规则：
+- 以 `-` 开头的参数视为 flag
+- `-c` / `--compact` → 紧凑输出
+- `-r` / `--raw-output` → 原始字符串（`JsonString` 不加引号）
+- `--color` → ANSI 颜色高亮
+
+**`-r` 的特殊处理**：
+```haskell
+outputJson :: Bool -> (JsonValue -> String) -> JsonValue -> IO ()
+outputJson True _ (JsonString s) = putStrLn (T.unpack s)  -- 不加引号
+outputJson _    enc json         = putStrLn (enc json)
+```
+
+这完全模拟了 `jq -r` 的行为：如果查询结果是一个 JSON 字符串，就打印它的原始内容。
+
+#### 3. 测试覆盖
+
+新增了 4 个 Hspec 测试用例：
+- `encodeCompact produces compact JSON`
+- `encodeColor contains ANSI escape codes`
+- `encodeCompactColor contains ANSI codes without newlines`
+- `round-trips through compact encode and parse`
+
+总测试数从 45 提升到 **49**，全部通过。
+
+### 验证结果
+
+```bash
+# 紧凑输出
+echo '{"a":1}' | cabal run hson -- -c
+# => {"a":1.0}
+
+# 原始字符串
+echo '{"name":"Alice"}' | cabal run hson -- -r .name
+# => Alice
+
+# 颜色高亮
+echo '{"a":1}' | cabal run hson -- --color
+# => 黄色 key + 洋红 number（在支持 ANSI 的终端中可见）
+```
+
+### 学习收获
+
+1. **不引入新依赖也能做好 CLI**：Haskell 的模式匹配非常适合轻量级的参数解析，几十行代码就能实现 `-c`、`-r`、`--color`。
+2. **函数组合决定输出格式**：我们把"编码器选择"抽象成一个纯函数 `selectEncoder :: Bool -> Bool -> (JsonValue -> String)`，这让 CLI 逻辑和核心序列化逻辑完全解耦。
+3. **`-r` 是用户体验的关键细节**：不加这个选项，每次查字符串都会得到带引号的 `"Alice"`，这对于脚本处理非常不友好。`jq` 之所以受欢迎，很大程度上是因为这些小细节。
+4. **ANSI 颜色其实很简单**：就是一些 `\x1b[33m` 这样的转义序列，不需要任何外部库。

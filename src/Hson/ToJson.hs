@@ -9,7 +9,8 @@ ToJson 类型类：把 Haskell 类型自动序列化为 `JsonValue`。
 同时，本模块还提供了 GHC.Generics 的自动推导支持，
 让用户可以写 `deriving (Generic, ToJson)`。
 
-此外还包含 `encode` 函数，用于把 `JsonValue` 输出为格式化的 JSON 字符串。
+此外还包含 `encode`、`encodeCompact`、`encodeColor` 等函数，
+用于把 `JsonValue` 输出为不同格式的 JSON 字符串。
 -}
 {-# LANGUAGE TypeSynonymInstances   #-}
 {-# LANGUAGE FlexibleInstances      #-}
@@ -25,6 +26,11 @@ module Hson.ToJson
   , object
   , (.=)
   , encode
+  , encodeCompact
+  , encodeColor
+  , encodeCompactColor
+  , ColorScheme(..)
+  , defaultColorScheme
   ) where
 
 import Data.Char (ord)
@@ -158,6 +164,126 @@ encode = go 0
     indent d = replicate (d * 2) ' '
 
     escapeString :: String -> String
+    escapeString = concatMap escapeChar
+      where
+        escapeChar c = case c of
+          '"'  -> "\\\""
+          '\\' -> "\\\\"
+          '\b' -> "\\b"
+          '\f' -> "\\f"
+          '\n' -> "\\n"
+          '\r' -> "\\r"
+          '\t' -> "\\t"
+          _    -> let code = ord c in
+                  if code < 0x20
+                    then "\\u" ++ padHex 4 code
+                    else [c]
+        padHex len n = let h = showHex n "" in replicate (len - length h) '0' ++ h
+
+-- | 紧凑输出：无缩进、无换行。
+encodeCompact :: JsonValue -> String
+encodeCompact = go
+  where
+    go JsonNull       = "null"
+    go (JsonBool b)   = if b then "true" else "false"
+    go (JsonNumber n) = show n
+    go (JsonString s) = "\"" ++ escapeString (T.unpack s) ++ "\""
+    go (JsonArray xs) = "[" ++ intercalate "," (map go xs) ++ "]"
+    go (JsonObject ps) = "{" ++ intercalate "," (map (\(k,v) -> "\"" ++ T.unpack k ++ "\":" ++ go v) ps) ++ "}"
+
+    escapeString = concatMap escapeChar
+      where
+        escapeChar c = case c of
+          '"'  -> "\\\""
+          '\\' -> "\\\\"
+          '\b' -> "\\b"
+          '\f' -> "\\f"
+          '\n' -> "\\n"
+          '\r' -> "\\r"
+          '\t' -> "\\t"
+          _    -> let code = ord c in
+                  if code < 0x20
+                    then "\\u" ++ padHex 4 code
+                    else [c]
+        padHex len n = let h = showHex n "" in replicate (len - length h) '0' ++ h
+
+-- ========================================================================
+-- Part 5: ANSI 颜色高亮
+-- ========================================================================
+
+-- | 颜色方案。
+data ColorScheme = ColorScheme
+  { colorKey    :: String -> String  -- ^ 对象键
+  , colorString :: String -> String  -- ^ 字符串
+  , colorNumber :: String -> String  -- ^ 数字
+  , colorBool   :: String -> String  -- ^ 布尔/null
+  , colorReset  :: String            -- ^ 重置
+  }
+
+-- | 默认终端颜色方案。
+defaultColorScheme :: ColorScheme
+defaultColorScheme = ColorScheme
+  { colorKey    = \s -> "\x1b[33m" ++ s ++ "\x1b[0m"   -- 黄色
+  , colorString = \s -> "\x1b[32m" ++ s ++ "\x1b[0m"   -- 绿色
+  , colorNumber = \s -> "\x1b[35m" ++ s ++ "\x1b[0m"   -- 洋红
+  , colorBool   = \s -> "\x1b[34m" ++ s ++ "\x1b[0m"   -- 蓝色
+  , colorReset  = "\x1b[0m"
+  }
+
+-- | 带缩进的颜色输出。
+encodeColor :: JsonValue -> String
+encodeColor = encodeWithColor defaultColorScheme 0
+
+-- | 紧凑的颜色输出。
+encodeCompactColor :: JsonValue -> String
+encodeCompactColor = encodeCompactWithColor defaultColorScheme
+
+encodeWithColor :: ColorScheme -> Int -> JsonValue -> String
+encodeWithColor cs = go
+  where
+    go _ JsonNull       = colorBool cs "null"
+    go _ (JsonBool b)   = colorBool cs $ if b then "true" else "false"
+    go _ (JsonNumber n) = colorNumber cs $ show n
+    go _ (JsonString s) = colorString cs $ "\"" ++ escapeString (T.unpack s) ++ "\""
+    go _ (JsonArray []) = "[]"
+    go n (JsonArray xs) =
+      "[\n"
+      ++ intercalate ",\n" (map (\x -> indent (n+1) ++ go (n+1) x) xs)
+      ++ "\n" ++ indent n ++ "]"
+    go _ (JsonObject []) = "{}"
+    go n (JsonObject ps) =
+      "{\n"
+      ++ intercalate ",\n" (map (\(k,v) -> indent (n+1) ++ "\"" ++ colorKey cs (T.unpack k) ++ "\": " ++ go (n+1) v) ps)
+      ++ "\n" ++ indent n ++ "}"
+
+    indent d = replicate (d * 2) ' '
+
+    escapeString = concatMap escapeChar
+      where
+        escapeChar c = case c of
+          '"'  -> "\\\""
+          '\\' -> "\\\\"
+          '\b' -> "\\b"
+          '\f' -> "\\f"
+          '\n' -> "\\n"
+          '\r' -> "\\r"
+          '\t' -> "\\t"
+          _    -> let code = ord c in
+                  if code < 0x20
+                    then "\\u" ++ padHex 4 code
+                    else [c]
+        padHex len n = let h = showHex n "" in replicate (len - length h) '0' ++ h
+
+encodeCompactWithColor :: ColorScheme -> JsonValue -> String
+encodeCompactWithColor cs = go
+  where
+    go JsonNull       = colorBool cs "null"
+    go (JsonBool b)   = colorBool cs $ if b then "true" else "false"
+    go (JsonNumber n) = colorNumber cs $ show n
+    go (JsonString s) = colorString cs $ "\"" ++ escapeString (T.unpack s) ++ "\""
+    go (JsonArray xs) = "[" ++ intercalate "," (map go xs) ++ "]"
+    go (JsonObject ps) = "{" ++ intercalate "," (map (\(k,v) -> "\"" ++ colorKey cs (T.unpack k) ++ "\":" ++ go v) ps) ++ "}"
+
     escapeString = concatMap escapeChar
       where
         escapeChar c = case c of
