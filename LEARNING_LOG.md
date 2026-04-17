@@ -1062,3 +1062,140 @@ echo '{"a":1}' | cabal run hson -- --color
 2. **函数组合决定输出格式**：我们把"编码器选择"抽象成一个纯函数 `selectEncoder :: Bool -> Bool -> (JsonValue -> String)`，这让 CLI 逻辑和核心序列化逻辑完全解耦。
 3. **`-r` 是用户体验的关键细节**：不加这个选项，每次查字符串都会得到带引号的 `"Alice"`，这对于脚本处理非常不友好。`jq` 之所以受欢迎，很大程度上是因为这些小细节。
 4. **ANSI 颜色其实很简单**：就是一些 `\x1b[33m` 这样的转义序列，不需要任何外部库。
+
+---
+
+## 2026-04-16 | Haskell 语言全景：优势、劣势与应用场景
+
+### 什么时候会选 Haskell？
+
+| 场景 | 为什么选它 | 代表案例 |
+|------|-----------|---------|
+| **编译器/语言工具** | Parser Combinator + ADT 天然适合 AST 表示 | GHC 编译器、Pandoc 文档转换器 |
+| **金融/高频交易** | 类型系统保证计算正确性，无运行时异常 | Standard Chartered 银行核心系统 |
+| **区块链** | 形式化验证友好，数学严谨 | Cardano (ADA) 的 Plutus 智能合约 |
+| **高并发服务** | 不可变数据 + STM | Facebook 的 Sigma 反垃圾系统 |
+| **数据处理/ETL** | 管道组合、懒加载处理无限流 | 各类日志分析管道 |
+| **配置/构建工具** | Nix 语言直接受 Haskell 影响 | NixOS、Hydra CI |
+
+---
+
+### 优势：为什么 Haskell 让人上瘾
+
+#### 1. 编译器是你的测试工程师
+Haskell 的类型系统能 catch 掉 90% 的 bug 在编译期。
+
+在 `hson` 项目里：
+```haskell
+parseJson :: Parser JsonValue
+outputJson :: Bool -> (JsonValue -> String) -> JsonValue -> IO ()
+```
+这两个签名**精确到字节**地告诉你：
+- `parseJson` 做什么（解析出 `JsonValue`）
+- `outputJson` 需要什么（一个 Bool、一个编码器、一个 JsonValue）
+- 什么情况下有副作用（`IO ()` 表示"这会打印到屏幕"）
+
+在 Python 里，一个 `def process(raw, enc, mPath, input):` 你完全不知道参数类型，运行时才能发现传错。
+
+#### 2. 并发编程零心智负担
+因为所有数据默认**不可变**，多线程之间不存在 race condition。不需要锁、volatile、atomic。
+
+```haskell
+-- 这段代码可以安全地扔到 1000 个线程里并行执行，不需要锁
+compute :: Int -> Int
+compute x = x * 2 + 1
+```
+
+#### 3. 抽象能力天花板级别
+Functor、Applicative、Monad、Alternative……不是"装逼术语"，而是**真正能把重复逻辑抽象到极致**的工具。
+
+在 `Parser.hs` 里，`Parser` 同时是：
+- `Functor`（可以用 `fmap` 转换解析结果）
+- `Applicative`（可以组合多个独立解析器）
+- `Monad`（后一步解析依赖前一步结果）
+- `Alternative`（`<|>` 实现分支选择）
+
+在其他语言里，你要写 4 套不同的接口/类。在 Haskell 里，只是声明几个 `instance`，编译器自动验证正确性。
+
+#### 4. 懒求值（Lazy Evaluation）
+可以定义"无限数据结构"，只计算你需要的那部分：
+
+```haskell
+-- 斐波那契数列是无限的，但只取前 10 个时才真正计算
+fibs :: [Integer]
+fibs = 0 : 1 : zipWith (+) fibs (tail fibs)
+
+take 10 fibs  -- [0,1,1,2,3,5,8,13,21,34]
+```
+
+---
+
+### 劣势：为什么 Haskell 不火
+
+#### 1. 学习曲线像垂直的墙
+- `IO Monad` 是什么？为什么 `getArgs` 不能直接返回值？
+- `<-` 和 `let` 在 `do` 块里有什么区别？
+- `Functor`/`Applicative`/`Monad` 到底有什么区别？
+
+这些概念在 Python/JS/Java 里根本不存在。一个新手要 3-6 个月才能写出"地道的"Haskell。
+
+#### 2. 性能是黑盒
+Lazy evaluation 意味着"什么时候真正计算"由运行时决定。一个简单的程序可能因为"构建了巨大的 thunk 链"而内存爆炸。
+
+```haskell
+-- 看起来无害，但可能因为 lazy 导致内存泄漏
+sum [1..1000000]
+```
+
+需要理解 `seq`、`$!`、`BangPatterns` 才能控制性能——又是一道门槛。
+
+#### 3. 调试 = 噩梦
+- 函数被高度优化内联，运行时堆栈和源代码对不上
+- Lazy 导致错误发生的"现场"和错误产生的"根源"相隔十万八千里
+- 最常见的调试方式是"在类型系统里找 bug"
+
+#### 4. 生态小，招聘难
+- PyPI 有 50 万+ 包，Hackage 只有 1 万+
+- 想找 10 个会 Haskell 的程序员？可能比找 10 个会 Rust 的还难
+- 很多基础库（Kafka 客户端、AWS SDK）更新慢或质量参差
+
+#### 5. 与"现实世界"交互笨拙
+Haskell 的**纯函数世界**和**副作用世界**被 `IO` 严格隔离。虽然保证了安全性，但也意味着：
+
+```haskell
+-- 想在解析 JSON 时顺手记个日志？
+-- 不行，parseJson 是纯函数，不能碰 IO！
+-- 必须重构整个类型签名
+```
+
+这在业务快速迭代时很折磨人。
+
+---
+
+### 结合 hson 项目看
+
+#### Haskell 做对了的地方：
+- **ADT 表示 JSON**：`JsonNull | JsonBool Bool | JsonNumber Double | ...` 完美映射 JSON 规范
+- **Parser Combinator**：用 `<|>`、`many`、`<*>` 组合解析器，代码读起来像 BNF 文法
+- **类型驱动的错误处理**：`Either ParseError (JsonValue, Text)` 强制你处理解析失败
+
+#### 如果用 Python 写同样的东西：
+- AST 表示要用 `dict` + `isinstance` 检查，没有编译器帮你确保穷尽所有分支
+- 解析器组合要写一堆类和回调，或者用正则表达式拼贴（容易出 bug）
+- 错误处理靠 `try/except`，容易漏掉
+
+#### 但如果要做成工业级 JSON 库：
+- Haskell 的启动时间和二进制体积可能不如 Rust
+- 与 Python/JS 生态的绑定（FFI）很复杂
+- 懒求值可能导致大 JSON 文件解析时的内存问题
+
+---
+
+### 一句话总结
+
+> **Haskell 是那种"写的时候爽到飞起，维护的时候编译器帮你兜底，但招人、调试、性能调优会让你怀疑人生"的语言。**
+>
+> 它最适合：**对正确性要求极高、愿意投资团队学习成本、不需要快速堆人堆 feature** 的领域（金融核心系统、编译器、区块链）。
+>
+> 它最不适合：**MVP 快速迭代、需要大量第三方集成、团队水平参差** 的创业项目。
+
