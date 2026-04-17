@@ -157,10 +157,22 @@ outputJson _    enc json         = putStrLn (enc json)    -- 正常模式
 -- 知识点 11：Either 类型与错误处理
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- `parse` 的返回值类型是 `Either ParseError (JsonValue, Text)`。
--- `Either a b` 是 Haskell 中表示"可能失败"的标准类型：
---   - `Left a`  表示失败，携带错误信息
---   - `Right b` 表示成功，携带正确结果
--- 这种设计强制调用方处理错误，不会出现静默的 null/异常。
+-- `Either a b` 是 Haskell 中表示"可能失败"的标准类型，它有两个数据构造器（Data Constructor）：
+--
+--   - `Left a`  : 表示"失败/错误"的分支，携带错误信息。
+--     在 `process` 函数中，`Left err` 意味着 JSON 解析失败，`err` 的类型是 `ParseError`，
+--     里面包含行号、列号和错误描述。
+--
+--   - `Right b` : 表示"成功/正确"的分支，携带正常结果。
+--     `Right` 在英语里也有"正确"的双关含义。
+--     在 `process` 函数中，`Right (json, rest)` 意味着解析成功，
+--     `json` 是解析出的 AST，`rest` 是解析器没吃掉的剩余文本。
+--
+-- 对比其他语言：
+--   - Rust 的 `Result<T, E>` 对应 `Either E T`（`Ok` ~ `Right`，`Err` ~ `Left`）
+--   - Go 的 `(T, error)` 多返回值
+--
+-- 这种设计强制调用方用 `case ... of` 显式处理两种分支，不会出现静默的 null/异常。
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -194,6 +206,80 @@ outputJson _    enc json         = putStrLn (enc json)    -- 正常模式
 --        * 找到（Just result）-> 用 `outputJson` 输出。
 --        * 未找到（Nothing）-> 打印查询失败提示。
 --      - `Nothing` -> 直接输出整个 `json`。
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 知识点 14：process 全链路函数调用逐层解剖
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- 【第 1 层】T.pack :: String -> Text
+--   `input` 是 Haskell 默认的 `String` 类型（本质是 `[Char]` 链表，性能较差）。
+--   `T.pack` 把它转换成更高效的 `Data.Text` 类型，这是几乎所有 Haskell 程序的第一步。
+--
+-- 【第 2 层】parse :: Parser a -> Text -> Either ParseError (a, Text)
+--   `parse` 是解析器入口函数，定义在 `Hson.Parser` 中。
+--   它做三件事：
+--     1. 构造初始状态 `State input 1 1`（剩余文本=input，行号=1，列号=1）
+--     2. 执行 `runParser parseJson state`
+--     3. 成功时返回 `Right (结果, 剩余文本)`；失败时返回 `Left ParseError`
+--
+-- 【第 3 层】parseJson :: Parser JsonValue
+--   `Parser` 的本质是一个 newtype 包装：
+--     `newtype Parser a = Parser { runParser :: State -> Either ParseError (a, State) }`
+--   它就是一个"状态机函数"：接收当前解析状态，返回成功或失败。
+--
+--   `parseJson` 内部组合了 6 个子解析器：
+--     parseNull <|> parseBool <|> parseString <|> parseArray <|> parseObject <|> parseNumber
+--   `<|>` 来自 Alternative 类型类：先尝试左边，失败再尝试右边。
+--   `lexeme` 会自动跳过前后空白字符。
+--
+-- 【第 4 层】Right (json, rest) 分支里的检查
+--   `rest` 是解析器没吃掉的文本。比如输入 `{"a":1} garbage`，
+--   `json` 会解析出对象，`rest` 就是 `" garbage"`。
+--
+--   `T.all :: (Char -> Bool) -> Text -> Bool`
+--   它检查 Text 中**每一个字符**是否都满足条件。
+--
+--   `\c -> c `elem` (" \t\n\r" :: String)` 是一个 lambda（匿名函数）：
+--     - `\c -> ...`        : 接收参数 c，类似 JS 的 `c => ...`
+--     - `` c `elem` chars `` : `elem` 的中缀写法，等价于 `elem c chars`
+--       `elem :: Eq a => a -> [a] -> Bool` 意思是"这个元素是否在列表里"
+--     - `:: String`        : 类型标注，避免 `OverloadedStrings` 导致编译器推断歧义
+--
+--   整句含义："如果 rest 中存在任何非空白字符，就打印警告"。
+--   `unless` 是它的简化：`unless condition action` = `when (not condition) action`
+--
+-- 【第 5 层】queryString 的调用链
+--   `queryString :: Text -> JsonValue -> Maybe JsonValue`
+--   它内部实现是：`parsePath path >>= flip query json`
+--
+--   `parsePath` 把字符串路径（如 `.users[0].name`）解析成 `PathSegment` 列表：
+--     `Just [Key "users", Index 0, Key "name"]`
+--   如果格式非法，返回 `Nothing`。
+--
+--   `query` / `queryMulti` 在 AST 上递归查询：
+--     - `Key k`    : 在 `JsonObject` 里 `lookup` 字段名，找不到返回 `[]`
+--     - `Index i`  : 在 `JsonArray` 里按索引取值，越界返回 `[]`
+--     - `All`      : 用 `concatMap` 遍历数组每个元素，分别继续查询
+--     - 路径走完  : 返回 `[json]`
+--     - 类型不匹配 : 返回 `[]`
+--
+--   `query` 把 `queryMulti` 的结果包回 `Maybe`：
+--     - `[]`  -> `Nothing`
+--     - `[x]` -> `Just x`
+--     - `xs`  -> `Just (JsonArray xs)`  （因为 `[]` 通配可能返回多个值）
+--
+-- 【第 6 层】outputJson
+--   `outputJson True _ (JsonString s)` 匹配 `-r` 模式且结果是字符串的情况，
+--   此时用 `T.unpack` 把 Text 转回 String，直接输出原始内容（不带引号）。
+--   其他情况调用编码器 `enc`（如 `encodeCompactColor`）把 `JsonValue` 渲染成字符串再打印。
+--
+-- 【第 7 层】Left err 分支
+--   `ParseError` 是一个 record 类型，编译器自动生成字段访问函数：
+--     - `peLine    :: ParseError -> Int`
+--     - `peCol     :: ParseError -> Int`
+--     - `peMessage :: ParseError -> String`
+--   `show` 把 `Int` 转成 `String`，`++` 做字符串拼接。
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- | 统一的输出处理：解析结果 + 可选的 path 查询 + 编码选项。
